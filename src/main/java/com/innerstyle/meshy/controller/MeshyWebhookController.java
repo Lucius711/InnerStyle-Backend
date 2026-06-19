@@ -15,11 +15,16 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Receives MeshyAI webhook callbacks when a task changes state. This is the PRIMARY
- * completion path; the scheduled poller is a fallback. Configure this endpoint's public URL
- * in the Meshy dashboard and protect it with the shared {@code MESHY_WEBHOOK_SECRET}.
+ * Receives MeshyAI webhook callbacks when a task changes state. This is the
+ * PRIMARY
+ * completion path; the scheduled poller is a fallback. Configure this
+ * endpoint's public URL
+ * in the Meshy dashboard and protect it with the shared
+ * {@code MESHY_WEBHOOK_SECRET}.
  *
- * <p>This path is unauthenticated at the gateway level (it is an external callback), so we
+ * <p>
+ * This path is unauthenticated at the gateway level (it is an external
+ * callback), so we
  * verify a shared secret header here instead.
  */
 @Slf4j
@@ -46,7 +51,8 @@ public class MeshyWebhookController {
     private void verifySecret(String provided) {
         String expected = properties.webhookSecret();
         if (expected == null || expected.isBlank()) {
-            // No secret configured -> accept (development). Configure MESHY_WEBHOOK_SECRET in prod.
+            // No secret configured -> accept (development). Configure MESHY_WEBHOOK_SECRET
+            // in prod.
             log.warn("Meshy webhook secret is not configured; accepting callback without verification");
             return;
         }

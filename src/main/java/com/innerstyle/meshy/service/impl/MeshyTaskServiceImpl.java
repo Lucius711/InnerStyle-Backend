@@ -6,6 +6,7 @@ import com.innerstyle.common.exception.UpstreamServiceException;
 import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
 import com.innerstyle.meshy.client.dto.MeshyImageTo3dRequest;
+import com.innerstyle.meshy.client.dto.MeshyMultiImageTo3dRequest;
 import com.innerstyle.meshy.client.dto.MeshyRemeshRequest;
 import com.innerstyle.meshy.client.dto.MeshyResultDto;
 import com.innerstyle.meshy.client.dto.MeshyRetextureRequest;
@@ -15,8 +16,11 @@ import com.innerstyle.meshy.client.dto.MeshyTextTo3dPreviewRequest;
 import com.innerstyle.meshy.client.dto.MeshyTextTo3dRefineRequest;
 import com.innerstyle.meshy.config.MeshyProperties;
 import com.innerstyle.meshy.dto.request.AnimateRequest;
+import com.innerstyle.meshy.dto.request.FigurineBuildRequest;
+import com.innerstyle.meshy.dto.request.FigurineRequest;
 import com.innerstyle.meshy.dto.request.ImageTo3dRequest;
 import com.innerstyle.meshy.dto.request.ImageUploadOptions;
+import com.innerstyle.meshy.dto.request.MultiImageTo3dRequest;
 import com.innerstyle.meshy.dto.request.RefineRequest;
 import com.innerstyle.meshy.dto.request.RemeshRequest;
 import com.innerstyle.meshy.dto.request.RetextureRequest;
@@ -38,6 +42,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,6 +67,11 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     private static final Set<String> ALLOWED_IMAGE_TYPES =
         Set.of("image/jpeg", "image/jpg", "image/png");
+
+    /** Shared client for streaming model/animation files from the (CORS-less) Meshy CDN. */
+    private static final HttpClient MODEL_HTTP = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(15))
+        .build();
 
     @Override
     @Transactional
@@ -80,6 +94,56 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             options.getShouldRemesh(), options.getTargetPolycount(), options.getTopology(),
             options.getPoseMode(), options.getTexturePrompt(), null,
             options.getTargetFormats());
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskResponse createFigurinePrototype(FigurineRequest request) {
+        ensureConfigured();
+        String meshyTaskId = meshyClient.createFigurePrototype(request.getImageUrl());
+        MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId, null, null);
+        task.setSourceImageUrl(shorten(request.getImageUrl()));
+        return persistAndMap(task);
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskResponse createFigurinePrototypeFromUpload(MultipartFile file) {
+        ensureConfigured();
+        String dataUri = toDataUri(file);
+        String meshyTaskId = meshyClient.createFigurePrototype(dataUri);
+        MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId, null, null);
+        String label = "upload:" + (file.getOriginalFilename() != null ? file.getOriginalFilename() : "image");
+        task.setSourceImageUrl(label);
+        return persistAndMap(task);
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskResponse buildFigurine(FigurineBuildRequest request) {
+        ensureConfigured();
+        MeshyTask proto = requireSucceeded(request.getSourceTaskId(), MeshyTaskType.FIGURE_PROTOTYPE);
+        String meshyTaskId = meshyClient.createFigureBuild(proto.getMeshyTaskId());
+        MeshyTask task = newTask(MeshyTaskType.FIGURE_BUILD, meshyTaskId, null, proto.getId());
+        return persistAndMap(task);
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskResponse createMultiImageTo3d(MultiImageTo3dRequest request) {
+        ensureConfigured();
+        var meshyRequest = new MeshyMultiImageTo3dRequest(
+            request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
+            request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
+            request.getTopology(), request.getTexturePrompt(), request.getTargetFormats());
+
+        String meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
+
+        MeshyTask task = newTask(MeshyTaskType.MULTI_IMAGE_TO_3D, meshyTaskId,
+            request.getTexturePrompt(), null);
+        int count = request.getImageUrls() != null ? request.getImageUrls().size() : 0;
+        task.setSourceImageUrl("multi-image:" + count);
+        return persistAndMap(task);
     }
 
     private MeshyTaskResponse submitImageTo3d(String imageUrl, String sourceLabel, String aiModel,
@@ -236,6 +300,105 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             ? taskRepository.findAll(pageable)
             : taskRepository.findByStatus(status, pageable);
         return page.map(taskMapper::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MeshyTaskService.ModelData fetchModel(UUID id, String format) {
+        MeshyTask task = getTaskOrThrow(id);
+        String fmt = (format == null || format.isBlank()) ? null : format.toLowerCase();
+        String url = resolveAssetUrl(task, fmt);
+        if (url == null) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        try {
+            HttpResponse<byte[]> resp = MODEL_HTTP.send(
+                HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(60))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() / 100 != 2) {
+                log.warn("Model fetch failed ({}) for task {}", resp.statusCode(), id);
+                throw new UpstreamServiceException("meshy.upstreamError");
+            }
+            String contentType = resp.headers().firstValue("content-type")
+                .orElseGet(() -> contentTypeFor(fmt));
+            return new MeshyTaskService.ModelData(resp.body(), contentType,
+                "model." + (fmt != null ? fmt : "glb"));
+        } catch (IOException e) {
+            log.warn("Model fetch error for task {}: {}", id, e.getMessage());
+            throw new UpstreamServiceException("meshy.upstreamError");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new UpstreamServiceException("meshy.upstreamError");
+        }
+    }
+
+    /**
+     * Pick the best asset URL. Prefers an explicitly requested format, then a web-friendly
+     * .glb/.gltf among ALL outputs (so the in-browser viewer can play animations from
+     * animate-task results), then any model, then any animation.
+     */
+    private String resolveAssetUrl(MeshyTask task, String fmt) {
+        Map<String, String> models = task.getModelUrls();
+        Map<String, String> anims = task.getAnimationUrls();
+        if (fmt != null) {
+            if (models != null && models.get(fmt) != null) {
+                return models.get(fmt);
+            }
+            if (anims != null && anims.get(fmt) != null) {
+                return anims.get(fmt);
+            }
+        }
+        // Prefer a web-renderable file (.glb then .gltf) from either map.
+        for (String ext : List.of(".glb", ".gltf")) {
+            String byExt = firstUrlEndingWith(models, ext);
+            if (byExt != null) {
+                return byExt;
+            }
+            byExt = firstUrlEndingWith(anims, ext);
+            if (byExt != null) {
+                return byExt;
+            }
+        }
+        if (models != null && !models.isEmpty()) {
+            return models.values().iterator().next();
+        }
+        if (anims != null && !anims.isEmpty()) {
+            return anims.values().iterator().next();
+        }
+        return null;
+    }
+
+    /** First URL whose path (ignoring query string) ends with the given extension. */
+    private String firstUrlEndingWith(Map<String, String> urls, String ext) {
+        if (urls == null) {
+            return null;
+        }
+        for (String url : urls.values()) {
+            if (url == null) {
+                continue;
+            }
+            int q = url.indexOf('?');
+            String path = q >= 0 ? url.substring(0, q) : url;
+            if (path.toLowerCase().endsWith(ext)) {
+                return url;
+            }
+        }
+        return null;
+    }
+
+    private String contentTypeFor(String fmt) {
+        if (fmt == null) {
+            return "application/octet-stream";
+        }
+        return switch (fmt) {
+            case "glb" -> "model/gltf-binary";
+            case "gltf" -> "model/gltf+json";
+            case "usdz" -> "model/vnd.usdz+zip";
+            default -> "application/octet-stream";
+        };
     }
 
     @Override

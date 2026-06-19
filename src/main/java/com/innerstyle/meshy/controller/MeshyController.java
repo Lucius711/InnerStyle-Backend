@@ -2,8 +2,11 @@ package com.innerstyle.meshy.controller;
 
 import com.innerstyle.common.response.ApiResponse;
 import com.innerstyle.meshy.dto.request.AnimateRequest;
+import com.innerstyle.meshy.dto.request.FigurineBuildRequest;
+import com.innerstyle.meshy.dto.request.FigurineRequest;
 import com.innerstyle.meshy.dto.request.ImageTo3dRequest;
 import com.innerstyle.meshy.dto.request.ImageUploadOptions;
+import com.innerstyle.meshy.dto.request.MultiImageTo3dRequest;
 import com.innerstyle.meshy.dto.request.RefineRequest;
 import com.innerstyle.meshy.dto.request.RemeshRequest;
 import com.innerstyle.meshy.dto.request.RetextureRequest;
@@ -19,8 +22,10 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -46,7 +51,7 @@ import java.util.UUID;
  */
 @Tag(name = "Common - 3D Generation (MeshyAI)")
 @RestController
-@RequestMapping("/api/common/3d")
+@RequestMapping("/common/3d")
 @RequiredArgsConstructor
 public class MeshyController {
 
@@ -66,7 +71,14 @@ public class MeshyController {
             @RequestPart("file") MultipartFile file,
             @Valid @ModelAttribute ImageUploadOptions options) {
         return ApiResponse.success("meshy.task.created",
-            meshyTaskService.createImageTo3dFromUpload(file, options));
+                meshyTaskService.createImageTo3dFromUpload(file, options));
+    }
+
+    @PostMapping("/multi-image-to-3d")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Convert multiple reference images of one subject into a single 3D model")
+    public ApiResponse<MeshyTaskResponse> multiImageTo3d(@Valid @RequestBody MultiImageTo3dRequest request) {
+        return ApiResponse.success("meshy.task.created", meshyTaskService.createMultiImageTo3d(request));
     }
 
     @PostMapping("/text-to-3d")
@@ -111,10 +123,45 @@ public class MeshyController {
         return ApiResponse.success("meshy.task.created", meshyTaskService.animate(request));
     }
 
+    @PostMapping("/figurine")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Chibi figurine (stage 1): stylize a photo into a chibi concept image")
+    public ApiResponse<MeshyTaskResponse> figurinePrototype(@Valid @RequestBody FigurineRequest request) {
+        return ApiResponse.success("meshy.task.created", meshyTaskService.createFigurinePrototype(request));
+    }
+
+    @PostMapping(value = "/figurine/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Chibi figurine (stage 1) from an uploaded image file")
+    public ApiResponse<MeshyTaskResponse> figurinePrototypeUpload(@RequestPart("file") MultipartFile file) {
+        return ApiResponse.success("meshy.task.created",
+                meshyTaskService.createFigurinePrototypeFromUpload(file));
+    }
+
+    @PostMapping("/figurine/build")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Chibi figurine (stage 2): build the textured 3D figure from a prototype")
+    public ApiResponse<MeshyTaskResponse> figurineBuild(@Valid @RequestBody FigurineBuildRequest request) {
+        return ApiResponse.success("meshy.task.created", meshyTaskService.buildFigurine(request));
+    }
+
     @GetMapping("/tasks/{id}")
     @Operation(summary = "Get a 3D task and its current results")
     public ApiResponse<MeshyTaskResponse> getTask(@PathVariable UUID id) {
         return ApiResponse.success("meshy.task.found", meshyTaskService.getById(id));
+    }
+
+    @GetMapping("/tasks/{id}/model")
+    @Operation(summary = "Stream a task's model file (server-side proxy so browsers avoid the "
+            + "CDN's missing CORS headers)")
+    public ResponseEntity<byte[]> getTaskModel(@PathVariable UUID id,
+            @RequestParam(required = false) String format) {
+        MeshyTaskService.ModelData model = meshyTaskService.fetchModel(id, format);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, model.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + model.filename() + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")
+                .body(model.bytes());
     }
 
     @GetMapping("/tasks")

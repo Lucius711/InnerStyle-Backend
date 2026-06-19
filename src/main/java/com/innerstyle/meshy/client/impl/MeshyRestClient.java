@@ -5,6 +5,7 @@ import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
 import com.innerstyle.meshy.client.dto.MeshyCreateResponse;
 import com.innerstyle.meshy.client.dto.MeshyImageTo3dRequest;
+import com.innerstyle.meshy.client.dto.MeshyMultiImageTo3dRequest;
 import com.innerstyle.meshy.client.dto.MeshyRemeshRequest;
 import com.innerstyle.meshy.client.dto.MeshyRetextureRequest;
 import com.innerstyle.meshy.client.dto.MeshyRiggingRequest;
@@ -39,6 +40,11 @@ public class MeshyRestClient implements MeshyClient {
     }
 
     @Override
+    public String createMultiImageTo3d(MeshyMultiImageTo3dRequest request) {
+        return create(MeshyTaskType.MULTI_IMAGE_TO_3D.collectionPath(), request);
+    }
+
+    @Override
     public String createTextTo3dPreview(MeshyTextTo3dPreviewRequest request) {
         return create(MeshyTaskType.TEXT_TO_3D_PREVIEW.collectionPath(), request);
     }
@@ -66,6 +72,18 @@ public class MeshyRestClient implements MeshyClient {
     @Override
     public String createAnimation(MeshyAnimationRequest request) {
         return create(MeshyTaskType.ANIMATE.collectionPath(), request);
+    }
+
+    @Override
+    public String createFigurePrototype(String imageUrl) {
+        return create(MeshyTaskType.FIGURE_PROTOTYPE.collectionPath(),
+            java.util.Map.of("image_url", imageUrl));
+    }
+
+    @Override
+    public String createFigureBuild(String inputTaskId) {
+        return create(MeshyTaskType.FIGURE_BUILD.collectionPath(),
+            java.util.Map.of("input_task_id", inputTaskId));
     }
 
     @Override
