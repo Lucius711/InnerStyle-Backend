@@ -21,14 +21,25 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
   jackson:
     default-property-inclusion: non_null
     serialization:
       write-dates-as-timestamps: false
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 25MB
+      max-file-size: 15MB
+      max-request-size: 70MB   # allow several images for multi-image-to-3D upload
 
 # Application-specific configuration (bound to @ConfigurationProperties)
 app:
@@ -43,6 +54,63 @@ app:
       enabled: true
       interval-ms: 15000
       batch-size: 25
+
+  # --- Auth / JWT ---
+  jwt:
+    # HMAC-SHA256 secret (>= 32 bytes). MUST be overridden via env in production.
+    secret: ${JWT_SECRET:change-me-please-use-a-long-random-secret-at-least-32-bytes}
+    issuer: innerstyle
+    access-ttl: ${JWT_ACCESS_TTL:PT15M}      # 15 minutes
+    refresh-ttl: ${JWT_REFRESH_TTL:P7D}      # 7 days
+  auth:
+    # Base URL of the frontend, used to build verification / reset links in emails.
+    frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+    email-verification-ttl: ${EMAIL_VERIFICATION_TTL:PT24H}
+    password-reset-ttl: ${PASSWORD_RESET_TTL:PT15M}
+    max-failed-logins: 5
+    lock-duration: PT15M
+  oauth:
+    google:
+      # Expected audience (your Google OAuth client id). Leave blank to skip aud check (dev only).
+      client-id: ${GOOGLE_CLIENT_ID:}
+    facebook:
+      app-id: ${FACEBOOK_APP_ID:}
+
+  # --- 3D print flat fee (paid directly via VNPay/MoMo) ---
+  print:
+    fee: ${PRINT_FEE:300000}
+
+  # --- Payment gateways (direct payment for subscription + print) ---
+  payment:
+    order-ttl: ${PAYMENT_ORDER_TTL:PT15M}
+    vnpay:
+      tmn-code: ${VNPAY_TMN_CODE:}
+      hash-secret: ${VNPAY_HASH_SECRET:}
+      pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      return-url: ${VNPAY_RETURN_URL:http://localhost:5173/wallet/vnpay-return}
+    momo:
+      partner-code: ${MOMO_PARTNER_CODE:}
+      access-key: ${MOMO_ACCESS_KEY:}
+      secret-key: ${MOMO_SECRET_KEY:}
+      endpoint: ${MOMO_ENDPOINT:https://test-payment.momo.vn/v2/gateway/api/create}
+      redirect-url: ${MOMO_REDIRECT_URL:http://localhost:5173/wallet/momo-return}
+      ipn-url: ${MOMO_IPN_URL:http://localhost:2207/api/common/payments/momo/ipn}
+
+  # --- Redis-backed cache + rate limiting (fail-open if Redis is unavailable) ---
+  redis:
+    key-prefix: ${REDIS_KEY_PREFIX:is:dev}
+  cache:
+    pricing-ttl: PT1H
+    gallery-ttl: PT60S
+    user-ttl: PT15M
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    default-per-minute: 120
+    login-per-minute: 5
+    register-per-hour: 5
+    email-per-10min: 3
+    generation-per-minute: 10
+    payment-per-minute: 5
 
 springdoc:
   swagger-ui:

@@ -1,8 +1,11 @@
 package com.innerstyle.meshy.service.impl;
 
+import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
+import com.innerstyle.common.exception.UnauthorizedException;
 import com.innerstyle.common.exception.UpstreamServiceException;
+import com.innerstyle.membership.service.CreditService;
 import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
 import com.innerstyle.meshy.client.dto.MeshyImageTo3dRequest;
@@ -37,16 +40,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,6 +71,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final MeshyTaskRepository taskRepository;
     private final MeshyTaskMapper taskMapper;
     private final MeshyProperties properties;
+    private final CreditService creditService;
 
     private static final Set<String> ALLOWED_IMAGE_TYPES =
         Set.of("image/jpeg", "image/jpg", "image/png");
@@ -100,9 +108,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse createFigurinePrototype(FigurineRequest request) {
         ensureConfigured();
-        String meshyTaskId = meshyClient.createFigurePrototype(request.getImageUrl());
+        BillingContext billing = beginBilling(MeshyTaskType.FIGURE_PROTOTYPE);
+        String meshyTaskId;
+        try {
+            meshyTaskId = meshyClient.createFigurePrototype(request.getImageUrl());
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId, null, null);
         task.setSourceImageUrl(shorten(request.getImageUrl()));
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -111,10 +127,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse createFigurinePrototypeFromUpload(MultipartFile file) {
         ensureConfigured();
         String dataUri = toDataUri(file);
-        String meshyTaskId = meshyClient.createFigurePrototype(dataUri);
+        BillingContext billing = beginBilling(MeshyTaskType.FIGURE_PROTOTYPE);
+        String meshyTaskId;
+        try {
+            meshyTaskId = meshyClient.createFigurePrototype(dataUri);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId, null, null);
         String label = "upload:" + (file.getOriginalFilename() != null ? file.getOriginalFilename() : "image");
         task.setSourceImageUrl(label);
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -123,8 +147,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse buildFigurine(FigurineBuildRequest request) {
         ensureConfigured();
         MeshyTask proto = requireSucceeded(request.getSourceTaskId(), MeshyTaskType.FIGURE_PROTOTYPE);
-        String meshyTaskId = meshyClient.createFigureBuild(proto.getMeshyTaskId());
+        BillingContext billing = beginBilling(MeshyTaskType.FIGURE_BUILD);
+        String meshyTaskId;
+        try {
+            meshyTaskId = meshyClient.createFigureBuild(proto.getMeshyTaskId());
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.FIGURE_BUILD, meshyTaskId, null, proto.getId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -132,17 +164,52 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse createMultiImageTo3d(MultiImageTo3dRequest request) {
         ensureConfigured();
-        var meshyRequest = new MeshyMultiImageTo3dRequest(
-            request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
-            request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
-            request.getTopology(), request.getTexturePrompt(), request.getTargetFormats());
-
-        String meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.MULTI_IMAGE_TO_3D);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyMultiImageTo3dRequest(
+                request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
+                request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
+                request.getTopology(), request.getTexturePrompt(), request.getTargetFormats());
+            meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.MULTI_IMAGE_TO_3D, meshyTaskId,
             request.getTexturePrompt(), null);
         int count = request.getImageUrls() != null ? request.getImageUrls().size() : 0;
         task.setSourceImageUrl("multi-image:" + count);
+        applyBilling(task, billing);
+        return persistAndMap(task);
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskResponse createMultiImageTo3dFromUpload(List<MultipartFile> files,
+                                                            ImageUploadOptions options) {
+        ensureConfigured();
+        if (files == null || files.isEmpty()) {
+            throw new BadRequestException("validation.image.required");
+        }
+        List<String> dataUris = files.stream().map(this::toDataUri).toList();
+
+        BillingContext billing = beginBilling(MeshyTaskType.MULTI_IMAGE_TO_3D);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyMultiImageTo3dRequest(
+                dataUris, options.getAiModel(), options.getShouldTexture(),
+                options.getEnablePbr(), options.getShouldRemesh(), options.getTargetPolycount(),
+                options.getTopology(), options.getTexturePrompt(), options.getTargetFormats());
+            meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
+        MeshyTask task = newTask(MeshyTaskType.MULTI_IMAGE_TO_3D, meshyTaskId,
+            options.getTexturePrompt(), null);
+        task.setSourceImageUrl("multi-upload:" + files.size());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -152,14 +219,20 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                                               String texturePrompt, String textureImageUrl,
                                               List<String> targetFormats) {
         ensureConfigured();
-        var meshyRequest = new MeshyImageTo3dRequest(
-            imageUrl, aiModel, shouldTexture, enablePbr, shouldRemesh, targetPolycount,
-            topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null);
-
-        String meshyTaskId = meshyClient.createImageTo3d(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.IMAGE_TO_3D);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyImageTo3dRequest(
+                imageUrl, aiModel, shouldTexture, enablePbr, shouldRemesh, targetPolycount,
+                topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null);
+            meshyTaskId = meshyClient.createImageTo3d(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.IMAGE_TO_3D, meshyTaskId, texturePrompt, null);
         task.setSourceImageUrl(sourceLabel);
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -185,14 +258,20 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse createTextTo3dPreview(TextTo3dRequest request) {
         ensureConfigured();
-        var meshyRequest = MeshyTextTo3dPreviewRequest.preview(
-            request.getPrompt(), request.getAiModel(), request.getShouldRemesh(),
-            request.getTargetPolycount(), request.getTopology(), request.getPoseMode(),
-            request.getTargetFormats(), null);
-
-        String meshyTaskId = meshyClient.createTextTo3dPreview(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.TEXT_TO_3D_PREVIEW);
+        String meshyTaskId;
+        try {
+            var meshyRequest = MeshyTextTo3dPreviewRequest.preview(
+                request.getPrompt(), request.getAiModel(), request.getShouldRemesh(),
+                request.getTargetPolycount(), request.getTopology(), request.getPoseMode(),
+                request.getTargetFormats(), null);
+            meshyTaskId = meshyClient.createTextTo3dPreview(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.TEXT_TO_3D_PREVIEW, meshyTaskId, request.getPrompt(), null);
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -201,15 +280,20 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse refine(RefineRequest request) {
         ensureConfigured();
         MeshyTask preview = requireSucceeded(request.getSourceTaskId(), MeshyTaskType.TEXT_TO_3D_PREVIEW);
-
-        var meshyRequest = MeshyTextTo3dRefineRequest.refine(
-            preview.getMeshyTaskId(), request.getEnablePbr(), request.getTexturePrompt(),
-            request.getTextureImageUrl(), request.getTargetFormats());
-
-        String meshyTaskId = meshyClient.createTextTo3dRefine(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.TEXT_TO_3D_REFINE);
+        String meshyTaskId;
+        try {
+            var meshyRequest = MeshyTextTo3dRefineRequest.refine(
+                preview.getMeshyTaskId(), request.getEnablePbr(), request.getTexturePrompt(),
+                request.getTextureImageUrl(), request.getTargetFormats());
+            meshyTaskId = meshyClient.createTextTo3dRefine(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         String prompt = request.getTexturePrompt() != null ? request.getTexturePrompt() : preview.getPrompt();
         MeshyTask task = newTask(MeshyTaskType.TEXT_TO_3D_REFINE, meshyTaskId, prompt, preview.getId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -218,14 +302,19 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse remesh(RemeshRequest request) {
         ensureConfigured();
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
-
-        var meshyRequest = new MeshyRemeshRequest(
-            source.inputTaskId(), source.modelUrl(), request.getTargetFormats(),
-            request.getTopology(), request.getTargetPolycount());
-
-        String meshyTaskId = meshyClient.createRemesh(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.REMESH);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyRemeshRequest(
+                source.inputTaskId(), source.modelUrl(), request.getTargetFormats(),
+                request.getTopology(), request.getTargetPolycount());
+            meshyTaskId = meshyClient.createRemesh(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.REMESH, meshyTaskId, null, source.parentId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -237,16 +326,21 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("validation.style.required");
         }
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
-
-        var meshyRequest = new MeshyRetextureRequest(
-            source.inputTaskId(), source.modelUrl(), request.getTextStylePrompt(),
-            request.getImageStyleUrl(), request.getAiModel(), request.getEnablePbr(),
-            request.getEnableOriginalUv(), request.getTargetFormats());
-
-        String meshyTaskId = meshyClient.createRetexture(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.RETEXTURE);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyRetextureRequest(
+                source.inputTaskId(), source.modelUrl(), request.getTextStylePrompt(),
+                request.getImageStyleUrl(), request.getAiModel(), request.getEnablePbr(),
+                request.getEnableOriginalUv(), request.getTargetFormats());
+            meshyTaskId = meshyClient.createRetexture(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.RETEXTURE, meshyTaskId, request.getTextStylePrompt(),
             source.parentId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -255,13 +349,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse rig(RigRequest request) {
         ensureConfigured();
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
-
-        var meshyRequest = new MeshyRiggingRequest(
-            source.inputTaskId(), source.modelUrl(), request.getHeightMeters(), null);
-
-        String meshyTaskId = meshyClient.createRigging(meshyRequest);
-
+        BillingContext billing = beginBilling(MeshyTaskType.RIG);
+        String meshyTaskId;
+        try {
+            var meshyRequest = new MeshyRiggingRequest(
+                source.inputTaskId(), source.modelUrl(), request.getHeightMeters(), null);
+            meshyTaskId = meshyClient.createRigging(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
+        }
         MeshyTask task = newTask(MeshyTaskType.RIG, meshyTaskId, null, source.parentId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
@@ -270,35 +369,43 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse animate(AnimateRequest request) {
         ensureConfigured();
         MeshyTask rig = requireSucceeded(request.getRigTaskId(), MeshyTaskType.RIG);
-
-        MeshyAnimationRequest.PostProcess postProcess = null;
-        if (!isBlank(request.getOperationType())) {
-            Integer fps = "change_fps".equals(request.getOperationType()) && request.getFps() != null
-                ? Integer.valueOf(request.getFps())
-                : null;
-            postProcess = new MeshyAnimationRequest.PostProcess(request.getOperationType(), fps);
+        BillingContext billing = beginBilling(MeshyTaskType.ANIMATE);
+        String meshyTaskId;
+        try {
+            MeshyAnimationRequest.PostProcess postProcess = null;
+            if (!isBlank(request.getOperationType())) {
+                Integer fps = "change_fps".equals(request.getOperationType()) && request.getFps() != null
+                    ? Integer.valueOf(request.getFps())
+                    : null;
+                postProcess = new MeshyAnimationRequest.PostProcess(request.getOperationType(), fps);
+            }
+            var meshyRequest = new MeshyAnimationRequest(rig.getMeshyTaskId(), request.getActionId(), postProcess);
+            meshyTaskId = meshyClient.createAnimation(meshyRequest);
+        } catch (RuntimeException ex) {
+            abortBilling(billing);
+            throw ex;
         }
-
-        var meshyRequest = new MeshyAnimationRequest(rig.getMeshyTaskId(), request.getActionId(), postProcess);
-
-        String meshyTaskId = meshyClient.createAnimation(meshyRequest);
-
         MeshyTask task = newTask(MeshyTaskType.ANIMATE, meshyTaskId, null, rig.getId());
+        applyBilling(task, billing);
         return persistAndMap(task);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public MeshyTaskResponse getById(UUID id) {
-        return taskMapper.toResponse(getTaskOrThrow(id));
+    public MeshyTaskResponse getById(UUID id, UUID userId) {
+        MeshyTask task = getTaskOrThrow(id);
+        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        return taskMapper.toResponse(task);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<MeshyTaskResponse> list(MeshyTaskStatus status, Pageable pageable) {
+    public Page<MeshyTaskResponse> list(UUID userId, MeshyTaskStatus status, Pageable pageable) {
         Page<MeshyTask> page = (status == null)
-            ? taskRepository.findAll(pageable)
-            : taskRepository.findByStatus(status, pageable);
+            ? taskRepository.findByUserId(userId, pageable)
+            : taskRepository.findByUserIdAndStatus(userId, status, pageable);
         return page.map(taskMapper::toResponse);
     }
 
@@ -413,10 +520,35 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return;
         }
         MeshyTask task = found.get();
+        MeshyTaskStatus previous = task.getStatus();
         mergeInto(task, remote);
         taskRepository.save(task);
         log.info("Synced Meshy task {} -> {} ({}%)", task.getMeshyTaskId(), task.getStatus(),
             task.getProgress());
+        settleCreditsOnTerminal(task, previous);
+    }
+
+    /**
+     * When a job first reaches a terminal state, settle credits. Credits are consumed up-front,
+     * so a SUCCEEDED job needs nothing; a FAILED/CANCELED job is refunded. The {@code previous}
+     * non-terminal check makes this idempotent against duplicate webhook/poll deliveries.
+     */
+    private void settleCreditsOnTerminal(MeshyTask task, MeshyTaskStatus previous) {
+        if (task.getUserId() == null || isTerminal(previous)) {
+            return;
+        }
+        if (task.getStatus() == MeshyTaskStatus.FAILED || task.getStatus() == MeshyTaskStatus.CANCELED) {
+            int cost = creditService.creditCost(task.getTaskType().name());
+            if (cost > 0) {
+                creditService.refund(task.getUserId(), cost, "MESHY_TASK", task.getId());
+            }
+        }
+    }
+
+    private boolean isTerminal(MeshyTaskStatus status) {
+        return status == MeshyTaskStatus.SUCCEEDED
+            || status == MeshyTaskStatus.FAILED
+            || status == MeshyTaskStatus.CANCELED;
     }
 
     // ------------------------------------------------------------------ helpers
@@ -425,6 +557,49 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (!properties.hasApiKey()) {
             throw new UpstreamServiceException("meshy.apiKeyMissing");
         }
+    }
+
+    // -------------------------------------------------- billing (authorization hold)
+
+    /** Owner + credits consumed for a job (0 when the operation is free). */
+    private record BillingContext(UUID userId, int credits) {
+    }
+
+    private UUID currentUserIdOrThrow() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserPrincipal principal) {
+            return principal.getId();
+        }
+        throw new UnauthorizedException("auth.unauthorized");
+    }
+
+    /**
+     * Consume membership credits for the job BEFORE calling MeshyAI. If the operation costs no
+     * credits it is free. Throws {@code credit.insufficient} if the user is out of credits. The
+     * caller must {@link #abortBilling} on a submit failure to refund.
+     */
+    private BillingContext beginBilling(MeshyTaskType type) {
+        UUID userId = currentUserIdOrThrow();
+        int cost = creditService.creditCost(type.name());
+        if (cost > 0) {
+            creditService.consume(userId, type.name(), "MESHY_TASK", null);
+        }
+        return new BillingContext(userId, cost);
+    }
+
+    private void abortBilling(BillingContext ctx) {
+        if (ctx != null && ctx.credits() > 0) {
+            try {
+                creditService.refund(ctx.userId(), ctx.credits(), "MESHY_TASK", null);
+            } catch (RuntimeException ex) {
+                log.warn("Failed to refund {} credits after submit error: {}",
+                    ctx.credits(), ex.getMessage());
+            }
+        }
+    }
+
+    private void applyBilling(MeshyTask task, BillingContext ctx) {
+        task.setUserId(ctx.userId());
     }
 
     private MeshyTask newTask(MeshyTaskType type, String meshyTaskId, String prompt, UUID parentId) {

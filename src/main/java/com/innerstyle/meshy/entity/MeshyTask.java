@@ -65,6 +65,10 @@ public class MeshyTask {
     @Column(name = "parent_id")
     private UUID parentId;
 
+    /** Owner of this job (null for legacy rows created before auth). */
+    @Column(name = "user_id")
+    private UUID userId;
+
     /** Text prompt (text-to-3d) or texture/style prompt, when applicable. */
     @Column(columnDefinition = "text")
     private String prompt;

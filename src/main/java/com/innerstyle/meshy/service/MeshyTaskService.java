@@ -33,6 +33,10 @@ public interface MeshyTaskService {
     /** Multi-image-to-3D: several reference images of the same subject -> one model. */
     MeshyTaskResponse createMultiImageTo3d(MultiImageTo3dRequest request);
 
+    /** Multi-image-to-3D from uploaded files (converted to base64 data URIs for Meshy). */
+    MeshyTaskResponse createMultiImageTo3dFromUpload(java.util.List<MultipartFile> files,
+                                                     ImageUploadOptions options);
+
     MeshyTaskResponse createTextTo3dPreview(TextTo3dRequest request);
 
     MeshyTaskResponse refine(RefineRequest request);
@@ -54,9 +58,11 @@ public interface MeshyTaskService {
     /** Creative Lab — Chibi Figurine stage 2: prototype -> textured 3D figure (build). */
     MeshyTaskResponse buildFigurine(FigurineBuildRequest request);
 
-    MeshyTaskResponse getById(UUID id);
+    /** Fetch a task the given user owns (404 if it isn't theirs). */
+    MeshyTaskResponse getById(UUID id, UUID userId);
 
-    Page<MeshyTaskResponse> list(MeshyTaskStatus status, Pageable pageable);
+    /** List the given user's own tasks (private library), optionally filtered by status. */
+    Page<MeshyTaskResponse> list(UUID userId, MeshyTaskStatus status, Pageable pageable);
 
     /**
      * Server-side proxy of a task's model/animation file. Meshy result URLs live on a CDN that

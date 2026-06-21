@@ -1,0 +1,83 @@
+# InnerStyle full stack — Postgres + Redis + Spring Boot backend + nginx (SPA + API proxy).
+# Frontend build context assumes the two repos sit side by side:
+#   <parent>/InnerStyle-Backend/InnerStyle-Backend   (this file)
+#   <parent>/InnerStyle-Frontend/InnerStyle-Frontend
+# Adjust `frontend.build.context` if your layout differs.
+#
+# Usage:  cp .env.deploy.example .env  &&  edit .env  &&  docker compose up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-innerstyle}
+      POSTGRES_USER: ${POSTGRES_USER:-innerstyle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-innerstyle}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innerstyle} -d ${POSTGRES_DB:-innerstyle}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [innerstyle]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [innerstyle]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "2207"
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-innerstyle}
+      DATABASE_USERNAME: ${POSTGRES_USER:-innerstyle}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-innerstyle}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "2207"
+    networks: [innerstyle]
+
+  frontend:
+    build:
+      context: ../../InnerStyle-Frontend/InnerStyle-Frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_FACEBOOK_APP_ID: ${VITE_FACEBOOK_APP_ID:-}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks: [innerstyle]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  innerstyle:
+    driver: bridge

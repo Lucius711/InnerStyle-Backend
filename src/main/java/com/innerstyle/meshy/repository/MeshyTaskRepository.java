@@ -20,6 +20,11 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
 
     Page<MeshyTask> findByStatus(MeshyTaskStatus status, Pageable pageable);
 
+    /** A user's own tasks (the private library). */
+    Page<MeshyTask> findByUserId(UUID userId, Pageable pageable);
+
+    Page<MeshyTask> findByUserIdAndStatus(UUID userId, MeshyTaskStatus status, Pageable pageable);
+
     /** Non-terminal tasks for the polling fallback to reconcile. */
     @Query("SELECT t FROM MeshyTask t WHERE t.status IN :statuses ORDER BY t.updatedAt ASC")
     List<MeshyTask> findActive(@Param("statuses") List<MeshyTaskStatus> statuses, Pageable pageable);

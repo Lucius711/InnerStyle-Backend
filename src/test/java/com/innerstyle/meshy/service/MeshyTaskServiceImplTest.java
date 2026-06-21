@@ -1,5 +1,6 @@
 package com.innerstyle.meshy.service;
 
+import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.meshy.client.MeshyClient;
@@ -15,14 +16,19 @@ import com.innerstyle.meshy.entity.enums.MeshyTaskType;
 import com.innerstyle.meshy.mapper.MeshyTaskMapper;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
 import com.innerstyle.meshy.service.impl.MeshyTaskServiceImpl;
+import com.innerstyle.membership.service.CreditService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,6 +36,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +46,7 @@ class MeshyTaskServiceImplTest {
     @Mock private MeshyClient meshyClient;
     @Mock private MeshyTaskRepository taskRepository;
     @Mock private MeshyTaskMapper taskMapper;
+    @Mock private CreditService creditService;
 
     private MeshyTaskServiceImpl service;
 
@@ -47,7 +55,21 @@ class MeshyTaskServiceImplTest {
         var props = new MeshyProperties("test-key", "https://api.meshy.ai", "secret",
             Duration.ofSeconds(10), Duration.ofSeconds(60),
             new MeshyProperties.Poll(true, 15000L, 25));
-        service = new MeshyTaskServiceImpl(meshyClient, taskRepository, taskMapper, props);
+        service = new MeshyTaskServiceImpl(meshyClient, taskRepository, taskMapper, props,
+            creditService);
+
+        // Authenticate a user so billing (beginBilling -> currentUserIdOrThrow) can run.
+        var principal = UserPrincipal.fromClaims(UUID.randomUUID(), "tester@example.com",
+            List.of("USER"));
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
+        // Default: operations are free in tests (no credits consumed) unless a test overrides this.
+        lenient().when(creditService.creditCost(anyString())).thenReturn(0);
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -92,7 +114,7 @@ class MeshyTaskServiceImplTest {
         UUID id = UUID.randomUUID();
         when(taskRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getById(id))
+        assertThatThrownBy(() -> service.getById(id, UUID.randomUUID()))
             .isInstanceOf(ResourceNotFoundException.class)
             .hasMessage("meshy.task.notFound");
     }

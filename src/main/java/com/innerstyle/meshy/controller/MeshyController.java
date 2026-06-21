@@ -37,7 +37,10 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import com.innerstyle.auth.security.UserPrincipal;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -79,6 +82,16 @@ public class MeshyController {
     @Operation(summary = "Convert multiple reference images of one subject into a single 3D model")
     public ApiResponse<MeshyTaskResponse> multiImageTo3d(@Valid @RequestBody MultiImageTo3dRequest request) {
         return ApiResponse.success("meshy.task.created", meshyTaskService.createMultiImageTo3d(request));
+    }
+
+    @PostMapping(value = "/multi-image-to-3d/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Convert multiple uploaded image files (from your computer) into one 3D model")
+    public ApiResponse<MeshyTaskResponse> multiImageUpload(
+            @RequestPart("files") List<MultipartFile> files,
+            @Valid @ModelAttribute ImageUploadOptions options) {
+        return ApiResponse.success("meshy.task.created",
+                meshyTaskService.createMultiImageTo3dFromUpload(files, options));
     }
 
     @PostMapping("/text-to-3d")
@@ -146,9 +159,11 @@ public class MeshyController {
     }
 
     @GetMapping("/tasks/{id}")
-    @Operation(summary = "Get a 3D task and its current results")
-    public ApiResponse<MeshyTaskResponse> getTask(@PathVariable UUID id) {
-        return ApiResponse.success("meshy.task.found", meshyTaskService.getById(id));
+    @Operation(summary = "Get one of MY 3D tasks and its current results")
+    public ApiResponse<MeshyTaskResponse> getTask(@PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.success("meshy.task.found",
+                meshyTaskService.getById(id, principal.getId()));
     }
 
     @GetMapping("/tasks/{id}/model")
@@ -165,10 +180,12 @@ public class MeshyController {
     }
 
     @GetMapping("/tasks")
-    @Operation(summary = "List 3D tasks (optionally filtered by status)")
+    @Operation(summary = "List MY 3D tasks (private library, optionally filtered by status)")
     public ApiResponse<Page<MeshyTaskResponse>> listTasks(
             @RequestParam(required = false) MeshyTaskStatus status,
-            @ParameterObject Pageable pageable) {
-        return ApiResponse.success("meshy.tasks.found", meshyTaskService.list(status, pageable));
+            @ParameterObject Pageable pageable,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.success("meshy.tasks.found",
+                meshyTaskService.list(principal.getId(), status, pageable));
     }
 }
