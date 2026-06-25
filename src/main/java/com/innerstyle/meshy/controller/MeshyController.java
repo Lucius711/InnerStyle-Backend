@@ -14,6 +14,7 @@ import com.innerstyle.meshy.dto.request.RigRequest;
 import com.innerstyle.meshy.dto.request.TextTo3dRequest;
 import com.innerstyle.meshy.dto.response.MeshyTaskResponse;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
+import com.innerstyle.meshy.entity.enums.ModelOrigin;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,6 +27,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -179,6 +181,24 @@ public class MeshyController {
                 .body(model.bytes());
     }
 
+    @GetMapping("/tasks/{id}/model/export")
+    @Operation(summary = "Download MY model in a chosen format, optionally resized to a physical "
+            + "height (mm) with a bottom/centre origin. Resizing is a premium feature and only "
+            + "applies to printable formats (stl, obj).")
+    public ResponseEntity<byte[]> exportTaskModel(@PathVariable UUID id,
+            @RequestParam String format,
+            @RequestParam(required = false) Double heightMm,
+            @RequestParam(required = false, defaultValue = "BOTTOM") ModelOrigin origin,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        MeshyTaskService.ModelData model =
+            meshyTaskService.exportModel(id, principal.getId(), format, heightMm, origin);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, model.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + model.filename() + "\"")
+                .body(model.bytes());
+    }
+
     @GetMapping("/tasks")
     @Operation(summary = "List MY 3D tasks (private library, optionally filtered by status)")
     public ApiResponse<Page<MeshyTaskResponse>> listTasks(
@@ -187,5 +207,13 @@ public class MeshyController {
             @AuthenticationPrincipal UserPrincipal principal) {
         return ApiResponse.success("meshy.tasks.found",
                 meshyTaskService.list(principal.getId(), status, pageable));
+    }
+
+    @DeleteMapping("/tasks/{id}")
+    @Operation(summary = "Delete one of MY 3D tasks (removes it from my private library)")
+    public ApiResponse<Void> deleteTask(@PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        meshyTaskService.delete(id, principal.getId());
+        return ApiResponse.success("meshy.task.deleted");
     }
 }

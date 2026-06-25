@@ -47,6 +47,7 @@ class MeshyTaskServiceImplTest {
     @Mock private MeshyTaskRepository taskRepository;
     @Mock private MeshyTaskMapper taskMapper;
     @Mock private CreditService creditService;
+    @Mock private ContentModeration contentModeration;
 
     private MeshyTaskServiceImpl service;
 
@@ -56,7 +57,7 @@ class MeshyTaskServiceImplTest {
             Duration.ofSeconds(10), Duration.ofSeconds(60),
             new MeshyProperties.Poll(true, 15000L, 25));
         service = new MeshyTaskServiceImpl(meshyClient, taskRepository, taskMapper, props,
-            creditService);
+            creditService, contentModeration);
 
         // Authenticate a user so billing (beginBilling -> currentUserIdOrThrow) can run.
         var principal = UserPrincipal.fromClaims(UUID.randomUUID(), "tester@example.com",
@@ -75,7 +76,7 @@ class MeshyTaskServiceImplTest {
     @Test
     void createImageTo3dSubmitsAndPersistsPendingTask() {
         var request = new ImageTo3dRequest("https://example.com/p.png", "latest", true, true,
-            true, 30000, "triangle", "a-pose", null, null, null);
+            true, 30000, "triangle", "a-pose", null, null, null, null, null);
         when(meshyClient.createImageTo3d(any(MeshyImageTo3dRequest.class))).thenReturn("meshy-123");
         when(taskRepository.save(any(MeshyTask.class))).thenAnswer(inv -> inv.getArgument(0));
         when(taskMapper.toResponse(any(MeshyTask.class)))

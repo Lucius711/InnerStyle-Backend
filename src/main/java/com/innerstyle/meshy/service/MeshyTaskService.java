@@ -14,6 +14,7 @@ import com.innerstyle.meshy.dto.request.RigRequest;
 import com.innerstyle.meshy.dto.request.TextTo3dRequest;
 import com.innerstyle.meshy.dto.response.MeshyTaskResponse;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
+import com.innerstyle.meshy.entity.enums.ModelOrigin;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
@@ -64,6 +65,9 @@ public interface MeshyTaskService {
     /** List the given user's own tasks (private library), optionally filtered by status. */
     Page<MeshyTaskResponse> list(UUID userId, MeshyTaskStatus status, Pageable pageable);
 
+    /** Permanently delete a task the given user owns (404 if it isn't theirs). */
+    void delete(UUID id, UUID userId);
+
     /**
      * Server-side proxy of a task's model/animation file. Meshy result URLs live on a CDN that
      * does not send CORS headers, so the browser cannot load them into a 3D viewer directly.
@@ -73,6 +77,20 @@ public interface MeshyTaskService {
      * @param format requested format (e.g. {@code glb}); falls back to glb/gltf, then any available.
      */
     ModelData fetchModel(UUID id, String format);
+
+    /**
+     * Export a model the given user owns, optionally resized to a physical height and with its
+     * origin repositioned (for download / 3D printing).
+     *
+     * @param id        the task id
+     * @param userId    the authenticated owner (404 if the task isn't theirs)
+     * @param format    requested output format (must be one the task actually produced)
+     * @param heightMm  target height in millimetres, or {@code null} to keep the original size.
+     *                  Resizing is a premium feature and only supported for printable formats
+     *                  (see {@link com.innerstyle.meshy.util.MeshTransformer#supportsResize}).
+     * @param origin    where the model's origin sits when resized (defaults to {@code BOTTOM}).
+     */
+    ModelData exportModel(UUID id, UUID userId, String format, Double heightMm, ModelOrigin origin);
 
     /** Binary model payload: raw bytes + content type + a download filename. */
     record ModelData(byte[] bytes, String contentType, String filename) {

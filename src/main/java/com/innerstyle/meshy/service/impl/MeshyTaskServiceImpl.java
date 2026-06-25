@@ -2,9 +2,12 @@ package com.innerstyle.meshy.service.impl;
 
 import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.exception.BadRequestException;
+import com.innerstyle.common.exception.ForbiddenException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.common.exception.UnauthorizedException;
 import com.innerstyle.common.exception.UpstreamServiceException;
+import com.innerstyle.membership.entity.UserMembership;
+import com.innerstyle.membership.entity.enums.MembershipStatus;
 import com.innerstyle.membership.service.CreditService;
 import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
@@ -33,9 +36,12 @@ import com.innerstyle.meshy.dto.response.MeshyTaskResponse;
 import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
 import com.innerstyle.meshy.entity.enums.MeshyTaskType;
+import com.innerstyle.meshy.entity.enums.ModelOrigin;
 import com.innerstyle.meshy.mapper.MeshyTaskMapper;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
+import com.innerstyle.meshy.service.ContentModeration;
 import com.innerstyle.meshy.service.MeshyTaskService;
+import com.innerstyle.meshy.util.MeshTransformer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -72,6 +78,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final MeshyTaskMapper taskMapper;
     private final MeshyProperties properties;
     private final CreditService creditService;
+    private final ContentModeration contentModeration;
 
     private static final Set<String> ALLOWED_IMAGE_TYPES =
         Set.of("image/jpeg", "image/jpg", "image/png");
@@ -81,6 +88,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         .connectTimeout(Duration.ofSeconds(15))
         .build();
 
+    /** Upper bound for a resize request's target height, in millimetres (sanity guard). */
+    private static final double MAX_EXPORT_HEIGHT_MM = 1000.0;
+
     @Override
     @Transactional
     public MeshyTaskResponse createImageTo3d(ImageTo3dRequest request) {
@@ -88,7 +98,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             request.getAiModel(), request.getShouldTexture(), request.getEnablePbr(),
             request.getShouldRemesh(), request.getTargetPolycount(), request.getTopology(),
             request.getPoseMode(), request.getTexturePrompt(), request.getTextureImageUrl(),
-            request.getTargetFormats());
+            request.getTargetFormats(), request.getHdTexture(), request.getImageEnhancement());
     }
 
     @Override
@@ -101,7 +111,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             options.getAiModel(), options.getShouldTexture(), options.getEnablePbr(),
             options.getShouldRemesh(), options.getTargetPolycount(), options.getTopology(),
             options.getPoseMode(), options.getTexturePrompt(), null,
-            options.getTargetFormats());
+            options.getTargetFormats(), options.getHdTexture(), options.getImageEnhancement());
     }
 
     @Override
@@ -170,7 +180,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             var meshyRequest = new MeshyMultiImageTo3dRequest(
                 request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
                 request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
-                request.getTopology(), request.getTexturePrompt(), request.getTargetFormats());
+                request.getTopology(), request.getTexturePrompt(), request.getTargetFormats(), request.getHdTexture(), request.getImageEnhancement());
             meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -200,7 +210,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             var meshyRequest = new MeshyMultiImageTo3dRequest(
                 dataUris, options.getAiModel(), options.getShouldTexture(),
                 options.getEnablePbr(), options.getShouldRemesh(), options.getTargetPolycount(),
-                options.getTopology(), options.getTexturePrompt(), options.getTargetFormats());
+                options.getTopology(), options.getTexturePrompt(), options.getTargetFormats(), options.getHdTexture(), options.getImageEnhancement());
             meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -217,14 +227,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                                               Boolean shouldTexture, Boolean enablePbr, Boolean shouldRemesh,
                                               Integer targetPolycount, String topology, String poseMode,
                                               String texturePrompt, String textureImageUrl,
-                                              List<String> targetFormats) {
+                                              List<String> targetFormats, Boolean hdTexture,
+                                              Boolean imageEnhancement) {
         ensureConfigured();
+        contentModeration.assertClean(texturePrompt);
         BillingContext billing = beginBilling(MeshyTaskType.IMAGE_TO_3D);
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyImageTo3dRequest(
                 imageUrl, aiModel, shouldTexture, enablePbr, shouldRemesh, targetPolycount,
-                topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null);
+                topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null, hdTexture, imageEnhancement);
             meshyTaskId = meshyClient.createImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -258,6 +270,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse createTextTo3dPreview(TextTo3dRequest request) {
         ensureConfigured();
+        contentModeration.assertClean(request.getPrompt());
         BillingContext billing = beginBilling(MeshyTaskType.TEXT_TO_3D_PREVIEW);
         String meshyTaskId;
         try {
@@ -326,6 +339,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("validation.style.required");
         }
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
+        contentModeration.assertClean(request.getTextStylePrompt());
         BillingContext billing = beginBilling(MeshyTaskType.RETEXTURE);
         String meshyTaskId;
         try {
@@ -410,10 +424,58 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     @Override
+    @Transactional
+    public void delete(UUID id, UUID userId) {
+        MeshyTask task = getTaskOrThrow(id);
+        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        taskRepository.delete(task);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public MeshyTaskService.ModelData fetchModel(UUID id, String format) {
         MeshyTask task = getTaskOrThrow(id);
-        String fmt = (format == null || format.isBlank()) ? null : format.toLowerCase();
+        return downloadModel(task, normalizeFormat(format));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MeshyTaskService.ModelData exportModel(UUID id, UUID userId, String format,
+            Double heightMm, ModelOrigin origin) {
+        MeshyTask task = getTaskOrThrow(id);
+        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        String fmt = normalizeFormat(format);
+
+        boolean resize = heightMm != null;
+        if (resize) {
+            if (heightMm <= 0 || heightMm > MAX_EXPORT_HEIGHT_MM) {
+                throw new BadRequestException("meshy.export.heightOutOfRange");
+            }
+            if (!MeshTransformer.supportsResize(fmt)) {
+                throw new BadRequestException("meshy.export.resizeUnsupportedFormat");
+            }
+            requirePremiumMembership(userId);
+        }
+
+        MeshyTaskService.ModelData model = downloadModel(task, fmt);
+        if (!resize) {
+            return model;
+        }
+        byte[] resized = MeshTransformer.resize(model.bytes(), fmt, heightMm,
+            origin == null ? ModelOrigin.BOTTOM : origin);
+        return new MeshyTaskService.ModelData(resized, model.contentType(), model.filename());
+    }
+
+    private static String normalizeFormat(String format) {
+        return (format == null || format.isBlank()) ? null : format.toLowerCase();
+    }
+
+    /** Resolve a task's asset URL and stream its bytes (server-side proxy, avoids CDN CORS). */
+    private MeshyTaskService.ModelData downloadModel(MeshyTask task, String fmt) {
         String url = resolveAssetUrl(task, fmt);
         if (url == null) {
             throw new ResourceNotFoundException("meshy.task.notFound");
@@ -426,7 +488,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                     .build(),
                 HttpResponse.BodyHandlers.ofByteArray());
             if (resp.statusCode() / 100 != 2) {
-                log.warn("Model fetch failed ({}) for task {}", resp.statusCode(), id);
+                log.warn("Model fetch failed ({}) for task {}", resp.statusCode(), task.getId());
                 throw new UpstreamServiceException("meshy.upstreamError");
             }
             String contentType = resp.headers().firstValue("content-type")
@@ -434,11 +496,21 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return new MeshyTaskService.ModelData(resp.body(), contentType,
                 "model." + (fmt != null ? fmt : "glb"));
         } catch (IOException e) {
-            log.warn("Model fetch error for task {}: {}", id, e.getMessage());
+            log.warn("Model fetch error for task {}: {}", task.getId(), e.getMessage());
             throw new UpstreamServiceException("meshy.upstreamError");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new UpstreamServiceException("meshy.upstreamError");
+        }
+    }
+
+    /** Resizing is a premium feature: require an active, paid membership. */
+    private void requirePremiumMembership(UUID userId) {
+        UserMembership m = creditService.getOrCreateMembership(userId);
+        boolean premium = m.getStatus() == MembershipStatus.ACTIVE
+            && m.getPlan() != null && !m.getPlan().isFree();
+        if (!premium) {
+            throw new ForbiddenException("meshy.export.premiumOnly");
         }
     }
 

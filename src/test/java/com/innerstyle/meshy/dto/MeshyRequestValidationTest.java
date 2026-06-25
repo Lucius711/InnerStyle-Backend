@@ -32,7 +32,7 @@ class MeshyRequestValidationTest {
 
     @Test
     void imageTo3dRequiresImage() {
-        var dto = new ImageTo3dRequest(" ", null, null, null, null, null, null, null, null, null, null);
+        var dto = new ImageTo3dRequest(" ", null, null, null, null, null, null, null, null, null, null, null, null);
         assertThat(validator.validate(dto))
                 .anyMatch(v -> v.getPropertyPath().toString().equals("imageUrl"));
     }
@@ -40,7 +40,7 @@ class MeshyRequestValidationTest {
     @Test
     void imageTo3dRejectsOutOfRangePolycountAndBadPose() {
         var dto = new ImageTo3dRequest("https://x/p.png", null, null, null, null,
-                10, "triangle", "k-pose", null, null, null);
+                10, "triangle", "k-pose", null, null, null, null, null);
         var violations = validator.validate(dto);
         assertThat(violations).anyMatch(v -> v.getPropertyPath().toString().equals("targetPolycount"));
         assertThat(violations).anyMatch(v -> v.getPropertyPath().toString().equals("poseMode"));
@@ -49,7 +49,7 @@ class MeshyRequestValidationTest {
     @Test
     void validImageTo3dPasses() {
         var dto = new ImageTo3dRequest("https://x/p.png", "latest", true, true, true,
-                30000, "triangle", "a-pose", null, null, null);
+                30000, "triangle", "a-pose", null, null, null, null, null);
         assertThat(validator.validate(dto)).isEmpty();
     }
 

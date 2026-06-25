@@ -13,7 +13,7 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: validate          # Flyway owns the schema
+      ddl-auto: validate # Flyway owns the schema
     properties:
       hibernate.jdbc.time_zone: UTC
       hibernate.format_sql: false
@@ -39,7 +39,7 @@ spring:
   servlet:
     multipart:
       max-file-size: 15MB
-      max-request-size: 70MB   # allow several images for multi-image-to-3D upload
+      max-request-size: 70MB # allow several images for multi-image-to-3D upload
 
 # Application-specific configuration (bound to @ConfigurationProperties)
 app:
@@ -60,8 +60,8 @@ app:
     # HMAC-SHA256 secret (>= 32 bytes). MUST be overridden via env in production.
     secret: ${JWT_SECRET:change-me-please-use-a-long-random-secret-at-least-32-bytes}
     issuer: innerstyle
-    access-ttl: ${JWT_ACCESS_TTL:PT15M}      # 15 minutes
-    refresh-ttl: ${JWT_REFRESH_TTL:P7D}      # 7 days
+    access-ttl: ${JWT_ACCESS_TTL:PT15M} # 15 minutes
+    refresh-ttl: ${JWT_REFRESH_TTL:P7D} # 7 days
   auth:
     # Base URL of the frontend, used to build verification / reset links in emails.
     frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}

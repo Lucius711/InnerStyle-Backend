@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # ----- Build stage: compile + package the Spring Boot jar (Java 21 / Maven) -----
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app

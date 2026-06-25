@@ -64,4 +64,10 @@ public class ImageTo3dRequest {
 
     @Schema(description = "Requested output formats", example = "[\"glb\", \"fbx\"]")
     private List<@Pattern(regexp = "glb|obj|fbx|stl|usdz|3mf", message = "1.targetFormats.invalid") String> targetFormats;
+
+    @Schema(description = "Generate the base color texture at 4K (HD). Meshy-6/latest only.", example = "true")
+    private Boolean hdTexture;
+
+    @Schema(description = "Optimize/stylize the input image (default true). Set false to preserve the exact face. Meshy-6/latest only.", example = "false")
+    private Boolean imageEnhancement;
 }

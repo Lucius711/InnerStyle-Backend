@@ -26,4 +26,6 @@ public class MeshyMultiImageTo3dRequest {
     private String topology;
     private String texturePrompt;
     private List<String> targetFormats;
+    private Boolean hdTexture;
+    private Boolean imageEnhancement;
 }

@@ -29,4 +29,6 @@ public class MeshyImageTo3dRequest {
     private String textureImageUrl;
     private List<String> targetFormats;
     private Boolean moderation;
+    private Boolean hdTexture;
+    private Boolean imageEnhancement;
 }
