@@ -38,11 +38,16 @@ spring:
       write-dates-as-timestamps: false
   servlet:
     multipart:
-      max-file-size: 15MB
-      max-request-size: 70MB # allow several images for multi-image-to-3D upload
+      max-file-size: 60MB        # 3D model uploads (.glb/.fbx/...) can be tens of MB
+      max-request-size: 80MB     # also allow several images for multi-image-to-3D upload
 
 # Application-specific configuration (bound to @ConfigurationProperties)
 app:
+  # CORS allow-list (origin patterns, wildcards allowed). Comma-separated when set via env.
+  # Defaults cover the Vite dev server (localhost:5173), any localhost/127.0.0.1 port,
+  # and ngrok tunnels — so the in-browser 3D viewer can load Meshy textures cross-origin.
+  cors:
+    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:5173,http://localhost:*,http://127.0.0.1:*,https://*.ngrok-free.app,https://*.ngrok.io,https://*.ngrok.app}
   meshy:
     api-key: ${MESHY_API_KEY:}
     base-url: ${MESHY_BASE_URL:https://api.meshy.ai}
@@ -76,9 +81,14 @@ app:
     facebook:
       app-id: ${FACEBOOK_APP_ID:}
 
-  # --- 3D print flat fee (paid directly via VNPay/MoMo) ---
+  # --- 3D print pricing (paid directly via VNPay/MoMo) ---
+  # `fee` is the fallback; `prices` is the sell price (VND) per figurine height in cm.
   print:
     fee: ${PRINT_FEE:300000}
+    prices:
+      8: 649000
+      12: 749000
+      15: 849000
 
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:

@@ -46,6 +46,10 @@ public class PrintOrder {
     @Column(name = "source_task_id")
     private UUID sourceTaskId;
 
+    /** Chosen figurine height in cm (drives the price). */
+    @Column(name = "size_cm")
+    private Integer sizeCm;
+
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;
 
@@ -58,6 +62,41 @@ public class PrintOrder {
 
     @Column(length = 500)
     private String note;
+
+    // ----- Recipient (the customer who placed the order) -----
+
+    @Column(name = "recipient_name", length = 255)
+    private String recipientName;
+
+    @Column(name = "recipient_email", length = 255)
+    private String recipientEmail;
+
+    @Column(name = "recipient_phone", length = 20)
+    private String recipientPhone;
+
+    // ----- Shipping address (Vietnam 2-level: province + ward) -----
+
+    @Column(name = "province_code", length = 20)
+    private String provinceCode;
+
+    @Column(name = "province_name", length = 150)
+    private String provinceName;
+
+    @Column(name = "ward_code", length = 20)
+    private String wardCode;
+
+    @Column(name = "ward_name", length = 150)
+    private String wardName;
+
+    @Column(name = "address_detail", length = 500)
+    private String addressDetail;
+
+    /** Optional pinned coordinates from Google Maps (decimal degrees). */
+    @Column(name = "latitude", precision = 10, scale = 7)
+    private BigDecimal latitude;
+
+    @Column(name = "longitude", precision = 10, scale = 7)
+    private BigDecimal longitude;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

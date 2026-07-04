@@ -14,6 +14,10 @@ import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
 import com.innerstyle.meshy.entity.enums.MeshyTaskType;
 import com.innerstyle.meshy.mapper.MeshyTaskMapper;
+import com.innerstyle.meshy.repository.MeshyTaskAssetRepository;
+import com.innerstyle.meshy.repository.MeshyTaskUsdzRepository;
+import com.innerstyle.meshy.repository.MeshyTaskThumbnailRepository;
+import com.innerstyle.meshy.repository.MeshyTaskTextureRepository;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
 import com.innerstyle.meshy.service.impl.MeshyTaskServiceImpl;
 import com.innerstyle.membership.service.CreditService;
@@ -45,9 +49,14 @@ class MeshyTaskServiceImplTest {
 
     @Mock private MeshyClient meshyClient;
     @Mock private MeshyTaskRepository taskRepository;
+    @Mock private MeshyTaskAssetRepository assetRepository;
+    @Mock private MeshyTaskUsdzRepository usdzRepository;
+    @Mock private MeshyTaskThumbnailRepository thumbnailRepository;
+    @Mock private MeshyTaskTextureRepository textureRepository;
     @Mock private MeshyTaskMapper taskMapper;
     @Mock private CreditService creditService;
     @Mock private ContentModeration contentModeration;
+    @Mock private MeshToolRunner meshToolRunner;
 
     private MeshyTaskServiceImpl service;
 
@@ -56,8 +65,9 @@ class MeshyTaskServiceImplTest {
         var props = new MeshyProperties("test-key", "https://api.meshy.ai", "secret",
             Duration.ofSeconds(10), Duration.ofSeconds(60),
             new MeshyProperties.Poll(true, 15000L, 25));
-        service = new MeshyTaskServiceImpl(meshyClient, taskRepository, taskMapper, props,
-            creditService, contentModeration);
+        service = new MeshyTaskServiceImpl(meshyClient, taskRepository, assetRepository, usdzRepository,
+            thumbnailRepository, textureRepository, taskMapper, props, creditService, contentModeration,
+            meshToolRunner);
 
         // Authenticate a user so billing (beginBilling -> currentUserIdOrThrow) can run.
         var principal = UserPrincipal.fromClaims(UUID.randomUUID(), "tester@example.com",
@@ -139,5 +149,65 @@ class MeshyTaskServiceImplTest {
         assertThat(task.getProgress()).isEqualTo(100);
         assertThat(task.getModelUrls()).containsEntry("glb", "https://assets/model.glb");
         assertThat(task.getConsumedCredits()).isEqualTo(30);
+    }
+
+    @Test
+    void fetchModelServesCachedUsdz() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        var cached = new com.innerstyle.meshy.entity.MeshyTaskUsdz();
+        cached.setTaskId(id);
+        cached.setData(new byte[] {1, 2, 3});
+        cached.setSize(3);
+        when(usdzRepository.findById(id)).thenReturn(Optional.of(cached));
+
+        var result = service.fetchModel(id, "usdz");
+
+        assertThat(result.contentType()).isEqualTo("model/vnd.usdz+zip");
+        assertThat(result.filename()).isEqualTo("model.usdz");
+        assertThat(result.bytes()).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void fetchModelThrowsWhenUsdzNeitherCachedNorHosted() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(usdzRepository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.fetchModel(id, "usdz"))
+            .isInstanceOf(ResourceNotFoundException.class)
+            .hasMessage("meshy.task.notFound");
+    }
+
+    @Test
+    void storeUsdzPersistsBytesForExistingTask() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(usdzRepository.findById(id)).thenReturn(Optional.empty());
+
+        service.storeUsdz(id, new byte[] {9, 8, 7, 6});
+
+        ArgumentCaptor<com.innerstyle.meshy.entity.MeshyTaskUsdz> captor =
+            ArgumentCaptor.forClass(com.innerstyle.meshy.entity.MeshyTaskUsdz.class);
+        org.mockito.Mockito.verify(usdzRepository).save(captor.capture());
+        assertThat(captor.getValue().getTaskId()).isEqualTo(id);
+        assertThat(captor.getValue().getSize()).isEqualTo(4);
+        assertThat(captor.getValue().getData()).containsExactly(9, 8, 7, 6);
+    }
+
+    @Test
+    void storeUsdzRejectsEmptyBody() {
+        UUID id = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.storeUsdz(id, new byte[0]))
+            .isInstanceOf(BadRequestException.class)
+            .hasMessage("meshy.usdz.empty");
     }
 }

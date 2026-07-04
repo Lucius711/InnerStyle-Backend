@@ -6,6 +6,7 @@ package com.innerstyle.auth.entity.enums;
  */
 public enum RoleCode {
     USER,
+    STAFF,
     ADMIN;
 
     public String authority() {

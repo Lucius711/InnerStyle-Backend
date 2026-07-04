@@ -24,7 +24,7 @@ import java.util.List;
 public class ImageTo3dRequest {
 
     @NotBlank(message = "1.image.required")
-    @Schema(description = "Public image URL or base64 data URI (.jpg/.jpeg/.png)",
+    @Schema(description = "Public image URL or base64 data URI (.jpg/.jpeg/.png/.webp)",
             example = "https://example.com/photo.png")
     private String imageUrl;
 

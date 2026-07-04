@@ -7,6 +7,8 @@ import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
+import com.innerstyle.print.config.PrintProperties;
+import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
 import com.innerstyle.print.entity.PrintOrder;
@@ -18,7 +20,6 @@ import com.innerstyle.wallet.entity.enums.PaymentProvider;
 import com.innerstyle.wallet.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -40,14 +41,14 @@ public class PrintOrderServiceImpl implements PrintOrderService {
     private final MeshyTaskRepository meshyTaskRepository;
     private final UserRepository userRepository;
     private final PaymentService paymentService;
-
-    @Value("${app.print.fee:300000}")
-    private BigDecimal printFee;
+    private final PrintProperties printProperties;
 
     @Override
     @Transactional
-    public PrintOrderInitResponse placeOrder(UUID userId, UUID taskId, PaymentProvider provider,
-                                             String note, String clientIp) {
+    public PrintOrderInitResponse placeOrder(UUID userId, CreatePrintOrderRequest request, String clientIp) {
+        UUID taskId = request.getTaskId();
+        PaymentProvider provider = PaymentProvider.valueOf(request.getProvider());
+
         MeshyTask task = meshyTaskRepository.findById(taskId)
             .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
         if (task.getUserId() == null || !task.getUserId().equals(userId)) {
@@ -59,18 +60,36 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
 
+        Integer sizeCm = request.getSizeCm();
+        if (!printProperties.supports(sizeCm)) {
+            throw new BadRequestException("print.size.invalid");
+        }
+        BigDecimal amount = printProperties.priceFor(sizeCm);
+
         PrintOrder order = new PrintOrder();
         order.setUser(user);
         order.setSourceTaskId(taskId);
-        order.setAmount(printFee);
+        order.setSizeCm(sizeCm);
+        order.setAmount(amount);
         order.setStatus(PrintOrderStatus.PENDING);
-        order.setNote(note);
+        order.setNote(request.getNote());
+        order.setRecipientName(request.getRecipientName());
+        order.setRecipientEmail(request.getRecipientEmail());
+        order.setRecipientPhone(request.getRecipientPhone());
+        order.setProvinceCode(request.getProvinceCode());
+        order.setProvinceName(request.getProvinceName());
+        order.setWardCode(request.getWardCode());
+        order.setWardName(request.getWardName());
+        order.setAddressDetail(request.getAddressDetail());
+        order.setLatitude(request.getLatitude());
+        order.setLongitude(request.getLongitude());
         printOrderRepository.save(order);
 
         PaymentInitResponse pay = paymentService.createPrintPayment(
-            userId, order.getId(), printFee, provider, clientIp);
-        log.info("Print order {} placed by {} (await payment {})", order.getId(), userId, provider);
-        return new PrintOrderInitResponse(order.getId(), printFee, pay.payUrl());
+            userId, order.getId(), amount, provider, clientIp);
+        log.info("Print order {} placed by {} ({}cm, await payment {})",
+            order.getId(), userId, sizeCm, provider);
+        return new PrintOrderInitResponse(order.getId(), amount, pay.payUrl());
     }
 
     @Override
@@ -81,7 +100,10 @@ public class PrintOrderServiceImpl implements PrintOrderService {
     }
 
     private PrintOrderResponse toResponse(PrintOrder o) {
-        return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getAmount(),
-            o.getCurrency(), o.getStatus().name(), o.getNote(), o.getCreatedAt());
+        return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(), o.getAmount(),
+            o.getCurrency(), o.getStatus().name(), o.getNote(),
+            o.getRecipientName(), o.getRecipientPhone(),
+            o.getProvinceName(), o.getWardName(), o.getAddressDetail(),
+            o.getCreatedAt());
     }
 }

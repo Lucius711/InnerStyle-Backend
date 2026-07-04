@@ -64,17 +64,17 @@ public class AuthController {
     @Operation(summary = "Log in with email + password")
     @PostMapping("/login")
     public ApiResponse<AuthTokensResponse> login(@Valid @RequestBody LoginRequest request,
-                                                 HttpServletRequest http) {
+            HttpServletRequest http) {
         return ApiResponse.success("auth.loggedIn",
-            authService.login(request, clientIp(http), userAgent(http)));
+                authService.login(request, clientIp(http), userAgent(http)));
     }
 
     @Operation(summary = "Exchange a refresh token for a new access token")
     @PostMapping("/refresh")
     public ApiResponse<AuthTokensResponse> refresh(@Valid @RequestBody RefreshTokenRequest request,
-                                                   HttpServletRequest http) {
+            HttpServletRequest http) {
         return ApiResponse.success("auth.refreshed",
-            authService.refresh(request.getRefreshToken(), clientIp(http), userAgent(http)));
+                authService.refresh(request.getRefreshToken(), clientIp(http), userAgent(http)));
     }
 
     @Operation(summary = "Log out (revoke the refresh token + blacklist the access token)")
@@ -110,11 +110,11 @@ public class AuthController {
     @Operation(summary = "Log in / sign up with a social provider (google, facebook)")
     @PostMapping("/oauth/{provider}")
     public ApiResponse<AuthTokensResponse> socialLogin(@PathVariable String provider,
-                                                       @Valid @RequestBody SocialLoginRequest request,
-                                                       HttpServletRequest http) {
+            @Valid @RequestBody SocialLoginRequest request,
+            HttpServletRequest http) {
         OauthProvider parsed = parseProvider(provider);
         return ApiResponse.success("auth.loggedIn",
-            authService.socialLogin(parsed, request.getToken(), clientIp(http), userAgent(http)));
+                authService.socialLogin(parsed, request.getToken(), clientIp(http), userAgent(http)));
     }
 
     private OauthProvider parseProvider(String provider) {

@@ -16,7 +16,10 @@ public enum MeshyTaskType {
     RIG("v1", "rigging"),
     ANIMATE("v1", "animations"),
     FIGURE_PROTOTYPE("creative-lab/figure/v1", "prototype"),
-    FIGURE_BUILD("creative-lab/figure/v1", "build");
+    FIGURE_BUILD("creative-lab/figure/v1", "build"),
+    // A user-uploaded 3D file stored locally (no Meshy task). Always terminal (SUCCEEDED),
+    // so it is never polled; the api path values are unused for this type.
+    UPLOADED("local", "uploaded");
 
     private final String apiVersion;
     private final String pathSegment;

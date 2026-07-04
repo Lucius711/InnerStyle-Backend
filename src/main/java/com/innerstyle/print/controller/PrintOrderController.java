@@ -6,7 +6,6 @@ import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
 import com.innerstyle.print.service.PrintOrderService;
-import com.innerstyle.wallet.entity.enums.PaymentProvider;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -47,10 +46,8 @@ public class PrintOrderController {
             @AuthenticationPrincipal UserPrincipal principal,
             @Valid @RequestBody CreatePrintOrderRequest request,
             HttpServletRequest http) {
-        PaymentProvider provider = PaymentProvider.valueOf(request.getProvider());
         return ApiResponse.success("print.order.placed",
-                printOrderService.placeOrder(principal.getId(), request.getTaskId(), provider,
-                        request.getNote(), clientIp(http)));
+                printOrderService.placeOrder(principal.getId(), request, clientIp(http)));
     }
 
     @Operation(summary = "List my 3D-print orders")
