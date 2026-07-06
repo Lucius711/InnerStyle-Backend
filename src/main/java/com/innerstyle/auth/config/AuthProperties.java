@@ -11,9 +11,14 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "app.auth")
 public record AuthProperties(
     @DefaultValue("http://localhost:5173") String frontendBaseUrl,
-    @DefaultValue("PT24H") Duration emailVerificationTtl,
     @DefaultValue("PT15M") Duration passwordResetTtl,
     @DefaultValue("5") int maxFailedLogins,
-    @DefaultValue("PT15M") Duration lockDuration
+    @DefaultValue("PT15M") Duration lockDuration,
+    // Email-verification OTP.
+    @DefaultValue("6") int otpLength,
+    @DefaultValue("PT10M") Duration otpTtl,
+    @DefaultValue("5") int otpMaxAttempts,
+    @DefaultValue("no-reply@innerstyle.app") String mailFrom,
+    @DefaultValue("InnerStyle") String mailFromName
 ) {
 }

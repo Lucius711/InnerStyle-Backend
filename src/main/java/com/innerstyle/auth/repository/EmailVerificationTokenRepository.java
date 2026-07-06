@@ -17,6 +17,9 @@ public interface EmailVerificationTokenRepository extends JpaRepository<EmailVer
 
     Optional<EmailVerificationToken> findByTokenHash(String tokenHash);
 
+    /** The current (unused) verification token for a user, if any. At most one is active. */
+    Optional<EmailVerificationToken> findFirstByUserAndUsedAtIsNullOrderByCreatedAtDesc(User user);
+
     /** Invalidate any outstanding tokens before issuing a new one. */
     @Modifying
     @Query("UPDATE EmailVerificationToken t SET t.usedAt = :now "

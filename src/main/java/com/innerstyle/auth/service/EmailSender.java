@@ -1,12 +1,18 @@
 package com.innerstyle.auth.service;
 
 /**
- * Sends transactional auth emails. The default {@link LoggingEmailSender} just logs the link;
- * swap in an SMTP/provider implementation (e.g. spring-boot-starter-mail, SES) for production.
+ * Sends transactional auth emails. Two implementations exist:
+ * <ul>
+ *   <li>{@code SmtpEmailSender} — real delivery via SMTP (Gmail); active when
+ *       {@code spring.mail.username} is configured.</li>
+ *   <li>{@code LoggingEmailSender} — dev fallback that logs the OTP / link so the auth flow
+ *       works end-to-end without SMTP configured.</li>
+ * </ul>
  */
 public interface EmailSender {
 
-    void sendVerificationEmail(String toEmail, String fullName, String verificationLink);
+    /** Send the numeric email-verification OTP issued on registration / resend. */
+    void sendVerificationOtp(String toEmail, String fullName, String otp);
 
     void sendPasswordResetEmail(String toEmail, String fullName, String resetLink);
 }

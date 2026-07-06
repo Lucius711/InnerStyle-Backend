@@ -32,6 +32,22 @@ spring:
           enabled: true
           max-active: 16
           max-idle: 8
+  # SMTP (Gmail) for transactional emails. Leave MAIL_USERNAME blank in local dev to fall
+  # back to the LoggingEmailSender (OTP printed to the log). In production set:
+  #   MAIL_USERNAME      = your.account@gmail.com
+  #   MAIL_PASSWORD      = a 16-char Gmail App Password (NOT the account password)
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
   jackson:
     default-property-inclusion: non_null
     serialization:
@@ -68,12 +84,18 @@ app:
     access-ttl: ${JWT_ACCESS_TTL:PT15M} # 15 minutes
     refresh-ttl: ${JWT_REFRESH_TTL:P7D} # 7 days
   auth:
-    # Base URL of the frontend, used to build verification / reset links in emails.
+    # Base URL of the frontend, used to build the password-reset link in emails.
     frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
-    email-verification-ttl: ${EMAIL_VERIFICATION_TTL:PT24H}
     password-reset-ttl: ${PASSWORD_RESET_TTL:PT15M}
     max-failed-logins: 5
     lock-duration: PT15M
+    # Email-verification OTP: a numeric code emailed on registration / resend.
+    otp-length: ${EMAIL_OTP_LENGTH:6}
+    otp-ttl: ${EMAIL_OTP_TTL:PT10M}
+    otp-max-attempts: ${EMAIL_OTP_MAX_ATTEMPTS:5}
+    # Sender identity for outgoing verification emails.
+    mail-from: ${MAIL_FROM:no-reply@innerstyle.app}
+    mail-from-name: ${MAIL_FROM_NAME:InnerStyle}
   oauth:
     google:
       # Expected audience (your Google OAuth client id). Leave blank to skip aud check (dev only).

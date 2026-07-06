@@ -26,6 +26,19 @@ public class TokenHasher {
         return URL_ENCODER.encodeToString(bytes);
     }
 
+    /**
+     * A numeric one-time password of the given length (zero-padded), e.g. {@code "042915"}.
+     * Uses {@link SecureRandom} so codes are not predictable.
+     */
+    public String generateOtp(int length) {
+        if (length < 4 || length > 9) {
+            throw new IllegalArgumentException("OTP length must be between 4 and 9");
+        }
+        int bound = (int) Math.pow(10, length);
+        int code = RANDOM.nextInt(bound);
+        return String.format("%0" + length + "d", code);
+    }
+
     /** SHA-256 hex digest (64 chars) — what we store and look up by. */
     public String hash(String token) {
         try {

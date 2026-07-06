@@ -16,7 +16,7 @@ public interface AuthService {
 
     UserProfileResponse register(RegisterRequest request);
 
-    void verifyEmail(String token);
+    void verifyEmail(String email, String otp);
 
     void resendVerification(String email);
 

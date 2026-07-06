@@ -122,14 +122,33 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
-    public void verifyEmail(String token) {
-        EmailVerificationToken record = emailTokenRepository.findByTokenHash(tokenHasher.hash(token))
+    // noRollbackFor: a failed OTP still commits the attempt-count increment (brute-force guard).
+    @Transactional(noRollbackFor = BadRequestException.class)
+    public void verifyEmail(String email, String otp) {
+        User user = userRepository.findByEmailIgnoreCase(email)
             .orElseThrow(() -> new BadRequestException("auth.verification.invalid"));
-        if (record.getUsedAt() != null || record.getExpiresAt().isBefore(Instant.now())) {
+        if (user.isEmailVerified()) {
+            throw new BadRequestException("auth.verification.alreadyVerified");
+        }
+        EmailVerificationToken record = emailTokenRepository
+            .findFirstByUserAndUsedAtIsNullOrderByCreatedAtDesc(user)
+            .orElseThrow(() -> new BadRequestException("auth.verification.invalid"));
+
+        if (record.getExpiresAt().isBefore(Instant.now())) {
+            throw new BadRequestException("auth.verification.expired");
+        }
+        if (record.getAttemptCount() >= authProperties.otpMaxAttempts()) {
+            // Burn the token so a fresh one must be requested.
+            record.setUsedAt(Instant.now());
+            emailTokenRepository.save(record);
+            throw new BadRequestException("auth.verification.tooManyAttempts");
+        }
+        if (!record.getTokenHash().equals(tokenHasher.hash(otp))) {
+            record.setAttemptCount(record.getAttemptCount() + 1);
+            emailTokenRepository.save(record);
             throw new BadRequestException("auth.verification.invalid");
         }
-        User user = record.getUser();
+
         user.setEmailVerified(true);
         user.setEmailVerifiedAt(Instant.now());
         if (user.getStatus() == UserStatus.PENDING_VERIFICATION) {
@@ -320,14 +339,13 @@ public class AuthServiceImpl implements AuthService {
 
     private void issueAndSendVerification(User user) {
         emailTokenRepository.invalidateAllForUser(user, Instant.now());
-        String raw = tokenHasher.generateToken();
+        String otp = tokenHasher.generateOtp(authProperties.otpLength());
         EmailVerificationToken record = new EmailVerificationToken();
         record.setUser(user);
-        record.setTokenHash(tokenHasher.hash(raw));
-        record.setExpiresAt(Instant.now().plus(authProperties.emailVerificationTtl()));
+        record.setTokenHash(tokenHasher.hash(otp));
+        record.setExpiresAt(Instant.now().plus(authProperties.otpTtl()));
         emailTokenRepository.save(record);
-        String link = authProperties.frontendBaseUrl() + "/verify-email?token=" + raw;
-        emailSender.sendVerificationEmail(user.getEmail(), user.getFullName(), link);
+        emailSender.sendVerificationOtp(user.getEmail(), user.getFullName(), otp);
     }
 
     private void registerFailedAttempt(User user) {

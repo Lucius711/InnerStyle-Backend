@@ -47,10 +47,10 @@ public class AuthController {
         return ApiResponse.success("auth.registered", authService.register(request));
     }
 
-    @Operation(summary = "Verify an email address")
+    @Operation(summary = "Verify an email address with the emailed OTP code")
     @PostMapping("/verify-email")
     public ApiResponse<Void> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
-        authService.verifyEmail(request.getToken());
+        authService.verifyEmail(request.getEmail(), request.getOtp());
         return ApiResponse.success("auth.emailVerified");
     }
 

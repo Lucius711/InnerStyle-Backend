@@ -45,6 +45,10 @@ public class EmailVerificationToken {
     @Column(name = "used_at")
     private Instant usedAt;
 
+    /** Number of failed OTP submissions against this token (brute-force guard). */
+    @Column(name = "attempt_count", nullable = false)
+    private int attemptCount = 0;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private Instant createdAt;

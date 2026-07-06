@@ -476,7 +476,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse addBase(UUID taskId, UUID userId, BaseRequest request) {
         MeshyTask task = getTaskOrThrow(taskId);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         if (task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
@@ -526,7 +526,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse removeBase(UUID taskId, UUID userId) {
         MeshyTask task = getTaskOrThrow(taskId);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
 
@@ -552,7 +552,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("meshy.model.empty");
         }
         MeshyTask task = getTaskOrThrow(taskId);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         if (task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
@@ -579,7 +579,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public com.innerstyle.meshy.dto.response.RepairResponse repairInPlace(UUID taskId, UUID userId) {
         MeshyTask task = getTaskOrThrow(taskId);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         return repairInPlace(taskId);
@@ -626,7 +626,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional(readOnly = true)
     public MeshyTaskResponse getById(UUID id, UUID userId) {
         MeshyTask task = getTaskOrThrow(id);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        // Legacy tasks (userId == null) have no ownership record — allow any authenticated user to
+        // access them rather than locking them out permanently.
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         return taskMapper.toResponse(task);
@@ -635,9 +637,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Override
     @Transactional(readOnly = true)
     public Page<MeshyTaskResponse> list(UUID userId, MeshyTaskStatus status, Pageable pageable) {
+        // Include legacy rows (userId IS NULL) so pre-auth tasks aren't invisible to the user.
         Page<MeshyTask> page = (status == null)
-            ? taskRepository.findByUserId(userId, pageable)
-            : taskRepository.findByUserIdAndStatus(userId, status, pageable);
+            ? taskRepository.findByUserIdOrLegacy(userId, pageable)
+            : taskRepository.findByUserIdOrLegacyAndStatus(userId, status, pageable);
         return page.map(taskMapper::toResponse);
     }
 
@@ -645,7 +648,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public void delete(UUID id, UUID userId) {
         MeshyTask task = getTaskOrThrow(id);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         taskRepository.delete(task);
@@ -709,7 +712,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("meshy.thumbnail.empty");
         }
         MeshyTask task = getTaskOrThrow(id);
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         MeshyTaskThumbnail thumb = thumbnailRepository.findById(task.getId())
@@ -739,11 +742,14 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         // Try the stored preview URL first (still valid for recent tasks); if it's gone/expired,
         // re-fetch a fresh signed URL from Meshy. Cache the bytes so we never hit the CDN again.
         byte[] bytes = fetchImageBytes(externalHttpUrl(task.getThumbnailUrl()));
-        if ((bytes == null || bytes.length == 0) && task.getMeshyTaskId() != null) {
+        boolean refetchedFromMeshy = false;
+        if ((bytes == null || bytes.length == 0) && task.getMeshyTaskId() != null
+                && !task.getMeshyTaskId().startsWith("upload-")) {
             try {
                 MeshyTaskDto remote = meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId());
                 if (remote != null) {
                     bytes = fetchImageBytes(externalHttpUrl(remote.getThumbnailUrl()));
+                    refetchedFromMeshy = bytes != null && bytes.length > 0;
                 }
             } catch (RuntimeException e) {
                 log.warn("Thumbnail re-fetch from Meshy failed for task {}: {}", id, e.getMessage());
@@ -757,6 +763,15 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         thumb.setData(bytes);
         thumb.setSize(bytes.length);
         thumbnailRepository.save(thumb);
+        // If we re-fetched from Meshy and the task's stored URL is still an expiring CDN link,
+        // point it at our own proxy now so subsequent webhooks/polls don't overwrite it.
+        if (refetchedFromMeshy) {
+            String self = selfThumbnailUrl(id);
+            if (!self.equals(task.getThumbnailUrl())) {
+                task.setThumbnailUrl(self);
+                taskRepository.save(task);
+            }
+        }
         return bytes;
     }
 
