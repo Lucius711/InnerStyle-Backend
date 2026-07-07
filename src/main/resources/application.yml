@@ -66,6 +66,14 @@ app:
   # and ngrok tunnels — so the in-browser 3D viewer can load Meshy textures cross-origin.
   cors:
     allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:https://*.vercel.app,http://localhost:5173,http://localhost:*,http://127.0.0.1:*,https://*.ngrok-free.app,https://*.ngrok.io,https://*.ngrok.app}
+  # Resend transactional email over HTTPS (port 443). Set RESEND_API_KEY to use it in preference
+  # to SMTP — required on cloud hosts that block outbound SMTP (e.g. Railway on non-Pro plans).
+  # Leave RESEND_API_KEY blank to fall back to SMTP (spring.mail.*) or the LoggingEmailSender.
+  resend:
+    api-key: ${RESEND_API_KEY:}
+    base-url: ${RESEND_BASE_URL:https://api.resend.com}
+    connect-timeout: 5s
+    read-timeout: 10s
   meshy:
     api-key: ${MESHY_API_KEY:}
     base-url: ${MESHY_BASE_URL:https://api.meshy.ai}
