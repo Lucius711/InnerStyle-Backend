@@ -65,7 +65,7 @@ app:
   # Defaults cover the Vite dev server (localhost:5173), any localhost/127.0.0.1 port,
   # and ngrok tunnels — so the in-browser 3D viewer can load Meshy textures cross-origin.
   cors:
-    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:https://*.vercel.app,http://localhost:5173,http://localhost:*,http://127.0.0.1:*,https://*.ngrok-free.app,https://*.ngrok.io,https://*.ngrok.app}
+    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:https://*.vercel.app,http://localhost:5173,http://localhost:*,http://127.0.0.1:*,https://*.ngrok-free.app,https://*.ngrok.io,https://*.ngrok.app,https://www.innerstyle.online/}
   # Resend transactional email over HTTPS (port 443). Set RESEND_API_KEY to use it in preference
   # to SMTP — required on cloud hosts that block outbound SMTP (e.g. Railway on non-Pro plans).
   # Leave RESEND_API_KEY blank to fall back to SMTP (spring.mail.*) or the LoggingEmailSender.

@@ -6,6 +6,7 @@ import com.innerstyle.common.exception.EmailDeliveryException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.List;
 
@@ -50,9 +51,15 @@ public class ResendEmailSender implements EmailSender {
                 .body(payload)
                 .retrieve()
                 .toBodilessEntity();
+        } catch (RestClientResponseException ex) {
+            // Resend rejected the request (4xx/5xx): log its status + JSON body so the exact reason
+            // (invalid key, unverified sender, free-tier recipient restriction, ...) is visible.
+            log.error("Resend rejected email to {}: status={} body={}",
+                toEmail, ex.getStatusCode(), ex.getResponseBodyAsString());
+            throw new EmailDeliveryException("auth.email.sendFailed");
         } catch (RestClientException ex) {
-            // Log the technical cause server-side; surface a stable failure code to the client.
-            log.error("Failed to send email to {} via Resend: {}", toEmail, ex.getMessage(), ex);
+            // Transport-level failure (timeout, DNS, TLS). Log the technical cause server-side.
+            log.error("Failed to reach Resend when sending email to {}: {}", toEmail, ex.getMessage(), ex);
             throw new EmailDeliveryException("auth.email.sendFailed");
         }
     }
