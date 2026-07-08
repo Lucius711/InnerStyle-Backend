@@ -15,23 +15,22 @@ import java.util.UUID;
 
 /**
  * Authenticated principal exposed to controllers via {@code @AuthenticationPrincipal}.
- * Can be built from a {@link User} entity (password login) or from JWT claims (stateless).
+ * Can be built from a {@link User} entity or from JWT claims (stateless). Accounts are
+ * social-only, so there is no password.
  */
 @Getter
 public class UserPrincipal implements UserDetails {
 
     private final UUID id;
     private final String email;
-    private final String passwordHash;
     private final boolean active;
     private final boolean locked;
     private final Collection<? extends GrantedAuthority> authorities;
 
-    public UserPrincipal(UUID id, String email, String passwordHash, boolean active,
+    public UserPrincipal(UUID id, String email, boolean active,
                          boolean locked, Collection<? extends GrantedAuthority> authorities) {
         this.id = id;
         this.email = email;
-        this.passwordHash = passwordHash;
         this.active = active;
         this.locked = locked;
         this.authorities = authorities;
@@ -43,7 +42,7 @@ public class UserPrincipal implements UserDetails {
             .map(Role::getCode)
             .map(code -> new SimpleGrantedAuthority("ROLE_" + code))
             .toList();
-        return new UserPrincipal(user.getId(), user.getEmail(), user.getPasswordHash(),
+        return new UserPrincipal(user.getId(), user.getEmail(),
             user.getStatus() == UserStatus.ACTIVE, locked, auths);
     }
 
@@ -51,7 +50,7 @@ public class UserPrincipal implements UserDetails {
         List<SimpleGrantedAuthority> auths = roles.stream()
             .map(r -> new SimpleGrantedAuthority(r.startsWith("ROLE_") ? r : "ROLE_" + r))
             .toList();
-        return new UserPrincipal(id, email, null, true, false, auths);
+        return new UserPrincipal(id, email, true, false, auths);
     }
 
     @Override
@@ -61,7 +60,7 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public String getPassword() {
-        return passwordHash;
+        return null; // social-only accounts have no password
     }
 
     @Override

@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Application user. {@code passwordHash} is nullable to allow social-only accounts.
+ * Application user. Accounts are social-only (Google / Facebook) — there is no password.
  * {@code avatarUrl} stores a RELATIVE path (rule 16); absolute URL is built in the DTO.
  */
 @Entity
@@ -42,9 +42,6 @@ public class User {
 
     @Column(nullable = false)
     private String email;
-
-    @Column(name = "password_hash")
-    private String passwordHash;
 
     @Column(name = "full_name", nullable = false)
     private String fullName;

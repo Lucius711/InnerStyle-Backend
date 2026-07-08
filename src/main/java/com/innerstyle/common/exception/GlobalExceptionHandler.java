@@ -5,9 +5,11 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Path;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -105,6 +107,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest()
             .body(ErrorResponse.simple("validation.parameter.missing",
                 HttpStatus.BAD_REQUEST.getReasonPhrase()));
+    }
+
+    /**
+     * Client disconnected mid-response (e.g. a browser aborts a large model/asset download).
+     * The socket is already gone, so there is no usable stream to write an {@link ErrorResponse}
+     * to — and the response Content-Type may already be committed to a non-JSON type (e.g.
+     * {@code model/gltf-binary}), which would otherwise make the fallback handler fail with
+     * {@code HttpMessageNotWritableException}. Swallow it quietly at DEBUG; returning {@code void}
+     * tells Spring not to render a body.
+     */
+    @ExceptionHandler({ClientAbortException.class, AsyncRequestNotUsableException.class})
+    public void handleClientDisconnect(Exception ex) {
+        log.debug("Client aborted the response: {}", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

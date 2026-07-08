@@ -159,11 +159,13 @@ def _signature_polygon(spec):
 
 
 def engrave_signature(base, geom, radius, base_h, depth_ratio, raised):
-    """Carve (or raise) a signature polygon on the BOTTOM face of the base primitive.
+    """Carve (or raise) a signature polygon on the SIDE WALL of the base primitive.
 
-    Done on the low-poly base only (never the full model), so the boolean stays cheap. The base
-    is centred at the origin with its thickness along Y in [-base_h/2, +base_h/2]; the bottom face
-    is at y = -base_h/2.
+    Done on the low-poly base only (never the full model), so the boolean stays cheap. The base is
+    centred at the origin with its thickness along Y in [-base_h/2, +base_h/2] and its footprint in
+    the XZ plane; the front-facing side wall is at z = +radius. The signature reads upright when the
+    base is viewed head-on from the front (+Z), like an engraved nameplate on the pedestal — no need
+    to flip the base over to see it.
     """
     import shapely.affinity as affinity
 
@@ -175,8 +177,12 @@ def engrave_signature(base, geom, radius, base_h, depth_ratio, raised):
     if w <= 0 or h <= 0:
         return base
 
-    # Scale the signature to fit ~60% of the base diameter (longest side), then centre it.
-    s = (radius * 2.0 * 0.6) / max(w, h)
+    # Fit the signature onto the visible side wall: cap its height to ~60% of the wall height
+    # (base_h) and its width to ~80% of the base width, whichever is tighter, keeping the aspect
+    # ratio. Then centre it on the wall (origin at y = 0).
+    s = min((base_h * 0.6) / h, (radius * 2.0 * 0.8) / w)
+    if s <= 0:
+        return base
     geom = affinity.scale(geom, xfact=s, yfact=s, origin=(0, 0))
     minx, miny, maxx, maxy = geom.bounds
     geom = affinity.translate(geom, xoff=-(minx + maxx) / 2.0, yoff=-(miny + maxy) / 2.0)
@@ -188,18 +194,15 @@ def engrave_signature(base, geom, radius, base_h, depth_ratio, raised):
         return base
     text_mesh = trimesh.util.concatenate(meshes)
 
-    # extrude_polygon builds glyphs in the XY plane, extruded along +Z. Rotate +90 deg about X so
-    # the glyphs lie flat (readable from below) and the thickness runs along Y. Mirror X so the
-    # text is not back-to-front when viewed from underneath the base.
-    text_mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2.0, [1, 0, 0]))
-    text_mesh.apply_transform(np.diag([-1.0, 1.0, 1.0, 1.0]))
-
+    # extrude_polygon already builds the glyphs upright in the XY plane (X = horizontal,
+    # Y = vertical) extruded along +Z. That is exactly a front-facing plaque on the +Z side wall,
+    # so no rotation or mirroring is needed — it reads correctly when viewed from the front (+Z).
     if raised:
-        # Sit a raised band just under the bottom face: y in [-base_h/2 - depth, -base_h/2].
-        text_mesh.apply_translation([0.0, -base_h / 2.0, 0.0])
+        # Stand the text proud of the wall: z in [radius, radius + depth].
+        text_mesh.apply_translation([0.0, 0.0, radius])
         return base.union(text_mesh, engine="manifold")
-    # Recess into the base from the bottom face: y in [-base_h/2, -base_h/2 + depth].
-    text_mesh.apply_translation([0.0, depth - base_h / 2.0, 0.0])
+    # Recess the text into the wall from its outer surface: z in [radius - depth, radius].
+    text_mesh.apply_translation([0.0, 0.0, radius - depth])
     return base.difference(text_mesh, engine="manifold")
 
 
@@ -502,7 +505,7 @@ def add_base(src, out, shape, height_ratio, margin_ratio, color=None, signature_
              texture_path=None):
     """Load the model as a scene (keeps textures), drop a base under it, and export GLB.
 
-    `signature_spec` (optional dict) describes a signature to engrave on the bottom of the base:
+    `signature_spec` (optional dict) describes a signature to engrave on the side wall of the base:
       {"type": "strokes", "strokes": [[[x,y],...],...], "penWidth": 0.04, "depthRatio": 0.35,
        "raised": false}  -- or {"type": "text", "text": "...", ...}.
     `texture_path` (optional) is the model's base-color map (Meshy references it externally, so it
@@ -671,6 +674,13 @@ def _detect_base_cut_y(mesh):
     return cut_y
 
 
+# Peak-memory guard for the fused-base passes (submesh/concatenate roughly double memory). Above
+# this face count the heavy passes are skipped so a constrained container isn't OOM-killed. ~500k
+# tris keeps typical Meshy figures well inside the fast path; tune down if the container has little
+# RAM, up if it has plenty.
+MAX_DEBASE_FACES = 500_000
+
+
 def strip_generated_base(src, out, texture_path=None):
     """Remove the pedestal Meshy bakes under a figure, keeping the figure + its textures.
 
@@ -717,6 +727,16 @@ def strip_generated_base(src, out, texture_path=None):
     if removed:
         _export_with_texture(scene, out, texture_path, dom)
         return removed
+
+    # Passes 2 & 3 rebuild/duplicate the mesh (submesh + concatenate), which roughly doubles peak
+    # memory. On a very high-poly figure that can exceed a constrained container's RAM and get the
+    # process OOM-killed (exit 137). Above a safe face budget, skip these passes and keep Meshy's
+    # base — the same end result as an OOM would leave, but clean instead of a hard kill.
+    total_faces = sum(len(g.faces) for g in scene.geometry.values()
+                      if getattr(g, "faces", None) is not None)
+    if total_faces > MAX_DEBASE_FACES:
+        _export_with_texture(scene, out, texture_path, dom)
+        return 0
 
     # Pass 2: base fused into a single mesh — split by connectivity (no graph engine needed) and
     # drop base-looking components.

@@ -241,9 +241,17 @@ public class MeshToolRunner {
                 process.destroyForcibly();
                 throw new UpstreamServiceException("mesh.opTimeout");
             }
-            if (process.exitValue() != 0) {
-                log.warn("mesh_tools {} failed (code {}): {}", command, process.exitValue(),
-                    new String(stderr));
+            int exit = process.exitValue();
+            // 128 + N == killed by signal N. 137 = SIGKILL (usually the OS OOM-killer reclaiming
+            // memory in a constrained container), 143 = SIGTERM. These are resource failures, not a
+            // malformed request, so surface them as a server-side error with an unambiguous log.
+            if (exit == 137 || exit == 143) {
+                log.warn("mesh_tools {} killed by signal (code {}) — likely out of memory on a "
+                    + "large model; container may need more RAM", command, exit);
+                throw new UpstreamServiceException("mesh.outOfMemory");
+            }
+            if (exit != 0) {
+                log.warn("mesh_tools {} failed (code {}): {}", command, exit, new String(stderr));
                 throw new BadRequestException("mesh.opFailed");
             }
             JsonNode json = objectMapper.readTree(new String(stdout).trim());
