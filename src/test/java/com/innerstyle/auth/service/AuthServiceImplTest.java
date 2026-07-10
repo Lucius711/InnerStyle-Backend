@@ -22,6 +22,7 @@ import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.redis.security.TokenBlacklist;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -57,6 +58,7 @@ class AuthServiceImplTest {
     private RefreshTokenService refreshTokenService;
     private UserMapper userMapper;
     private TokenBlacklist tokenBlacklist;
+    private PasswordEncoder passwordEncoder;
     private SocialTokenVerifier googleVerifier;
     private AuthServiceImpl service;
 
@@ -79,9 +81,11 @@ class AuthServiceImplTest {
         googleVerifier = mock(SocialTokenVerifier.class);
         when(googleVerifier.provider()).thenReturn(OauthProvider.GOOGLE);
 
+        passwordEncoder = mock(PasswordEncoder.class);
+
         service = new AuthServiceImpl(userRepository, roleRepository, oauthAccountRepository,
             loginAuditRepository, jwtService, jwtProperties, refreshTokenService, userMapper,
-            tokenBlacklist, List.of(googleVerifier));
+            tokenBlacklist, passwordEncoder, List.of(googleVerifier));
     }
 
     // ------------------------------------------------------------------ socialLogin
@@ -250,6 +254,7 @@ class AuthServiceImplTest {
     private UserProfileResponse profileOf(User u) {
         return new UserProfileResponse(
             u == null ? UUID.randomUUID() : u.getId(),
+            u == null ? "user" : u.getUsername(),
             u == null ? "x@example.com" : u.getEmail(),
             "Test User", null, "ACTIVE", true, List.of("USER"), Instant.now());
     }

@@ -20,10 +20,14 @@ import com.innerstyle.auth.service.RefreshTokenService;
 import com.innerstyle.auth.service.social.SocialTokenVerifier;
 import com.innerstyle.auth.service.social.SocialUserInfo;
 import com.innerstyle.common.exception.BadRequestException;
+import com.innerstyle.common.exception.ConflictException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
+import com.innerstyle.common.exception.UnauthorizedException;
 import com.innerstyle.redis.security.TokenBlacklist;
 import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +57,7 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
     private final TokenBlacklist tokenBlacklist;
+    private final PasswordEncoder passwordEncoder;
     private final Map<OauthProvider, SocialTokenVerifier> verifiers = new EnumMap<>(OauthProvider.class);
 
     public AuthServiceImpl(UserRepository userRepository, RoleRepository roleRepository,
@@ -60,7 +65,8 @@ public class AuthServiceImpl implements AuthService {
                            LoginAuditRepository loginAuditRepository,
                            JwtService jwtService, JwtProperties jwtProperties,
                            RefreshTokenService refreshTokenService, UserMapper userMapper,
-                           TokenBlacklist tokenBlacklist, List<SocialTokenVerifier> socialVerifiers) {
+                           TokenBlacklist tokenBlacklist, PasswordEncoder passwordEncoder,
+                           List<SocialTokenVerifier> socialVerifiers) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.oauthAccountRepository = oauthAccountRepository;
@@ -70,7 +76,59 @@ public class AuthServiceImpl implements AuthService {
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
         this.tokenBlacklist = tokenBlacklist;
+        this.passwordEncoder = passwordEncoder;
         socialVerifiers.forEach(v -> this.verifiers.put(v.provider(), v));
+    }
+
+    @Override
+    @Transactional
+    public AuthTokensResponse register(String username, String password, String fullName,
+                                       String ip, String userAgent) {
+        String normalizedUsername = username.trim().toLowerCase();
+        if (userRepository.existsByUsernameIgnoreCase(normalizedUsername)) {
+            throw new ConflictException("user.usernameExists");
+        }
+        Role userRole = roleRepository.findByCode(ROLE_USER)
+            .orElseThrow(() -> new IllegalStateException("Seed role USER missing"));
+
+        User user = new User();
+        user.setUsername(normalizedUsername);
+        user.setPasswordHash(passwordEncoder.encode(password));
+        user.setFullName(fullName != null && !fullName.isBlank() ? fullName.trim() : normalizedUsername);
+        user.setStatus(UserStatus.ACTIVE);
+        user.addRole(userRole);
+        user.setLastLoginAt(Instant.now());
+        try {
+            userRepository.save(user);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ConflictException("user.usernameExists");
+        }
+
+        audit(user.getId(), normalizedUsername, true, "register", ip, userAgent);
+        log.info("Local account registered: {}", user.getId());
+        return issueTokens(user, ip, userAgent);
+    }
+
+    @Override
+    @Transactional
+    public AuthTokensResponse login(String username, String password, String ip, String userAgent) {
+        String normalizedUsername = username.trim().toLowerCase();
+        User user = userRepository.findByUsernameIgnoreCase(normalizedUsername).orElse(null);
+        if (user == null || user.getPasswordHash() == null
+                || !passwordEncoder.matches(password, user.getPasswordHash())) {
+            audit(user == null ? null : user.getId(), normalizedUsername, false,
+                "invalid_credentials", ip, userAgent);
+            throw new UnauthorizedException("auth.invalidCredentials");
+        }
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            audit(user.getId(), normalizedUsername, false, "account_inactive", ip, userAgent);
+            throw new UnauthorizedException("auth.accountInactive");
+        }
+
+        user.setLastLoginAt(Instant.now());
+        userRepository.save(user);
+        audit(user.getId(), normalizedUsername, true, "password", ip, userAgent);
+        return issueTokens(user, ip, userAgent);
     }
 
     @Override

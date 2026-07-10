@@ -1,6 +1,8 @@
 package com.innerstyle.auth.controller;
 
+import com.innerstyle.auth.dto.request.LoginRequest;
 import com.innerstyle.auth.dto.request.RefreshTokenRequest;
+import com.innerstyle.auth.dto.request.RegisterRequest;
 import com.innerstyle.auth.dto.request.SocialLoginRequest;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.entity.enums.OauthProvider;
@@ -23,8 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Public authentication endpoints (served under {@code /api/user/auth/**}).
  *
- * <p>Sign-in is social-only (Google / Facebook). Email + password auth has been removed; accounts
- * are created and linked via {@link #socialLogin}.
+ * <p>Supports local sign-up / sign-in (email + password) as well as social sign-in
+ * (Google / Facebook). No email-verification / OTP step is required for local accounts.
  */
 @Tag(name = "Auth")
 @RestController
@@ -33,6 +35,24 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService authService;
+
+    @Operation(summary = "Register a new account with email + password")
+    @PostMapping("/register")
+    public ApiResponse<AuthTokensResponse> register(@Valid @RequestBody RegisterRequest request,
+            HttpServletRequest http) {
+        return ApiResponse.success("auth.registered",
+                authService.register(request.username(), request.password(), request.fullName(),
+                        clientIp(http), userAgent(http)));
+    }
+
+    @Operation(summary = "Log in with email + password")
+    @PostMapping("/login")
+    public ApiResponse<AuthTokensResponse> login(@Valid @RequestBody LoginRequest request,
+            HttpServletRequest http) {
+        return ApiResponse.success("auth.loggedIn",
+                authService.login(request.username(), request.password(),
+                        clientIp(http), userAgent(http)));
+    }
 
     @Operation(summary = "Exchange a refresh token for a new access token")
     @PostMapping("/refresh")

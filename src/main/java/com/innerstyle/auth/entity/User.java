@@ -25,7 +25,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Application user. Accounts are social-only (Google / Facebook) — there is no password.
+ * Application user. Accounts are created either locally (username + password) or via social
+ * providers (Google / Facebook); social-only accounts carry a NULL {@code passwordHash}.
  * {@code avatarUrl} stores a RELATIVE path (rule 16); absolute URL is built in the DTO.
  */
 @Entity
@@ -40,8 +41,17 @@ public class User {
     @UuidGenerator
     private UUID id;
 
-    @Column(nullable = false)
+    /** Local login identifier; NULL for social-only accounts. */
+    @Column(length = 50)
+    private String username;
+
+    /** Optional — social accounts carry an email; username-only accounts may not. */
+    @Column
     private String email;
+
+    /** BCrypt hash for local (username + password) accounts; NULL for social-only accounts. */
+    @Column(name = "password_hash")
+    private String passwordHash;
 
     @Column(name = "full_name", nullable = false)
     private String fullName;

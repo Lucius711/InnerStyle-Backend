@@ -12,6 +12,7 @@ import java.util.UUID;
 @Schema(description = "User profile")
 public record UserProfileResponse(
     UUID id,
+    String username,
     String email,
     String fullName,
     String avatarUrl,

@@ -38,16 +38,20 @@ public class JwtService {
         Instant now = Instant.now();
         Instant exp = now.plus(props.accessTtl());
         List<String> roles = user.getRoles().stream().map(Role::getCode).toList();
-        return Jwts.builder()
+        var builder = Jwts.builder()
             .issuer(props.issuer())
             .subject(user.getId().toString())
             .id(UUID.randomUUID().toString())
-            .claim("email", user.getEmail())
             .claim("roles", roles)
             .issuedAt(Date.from(now))
-            .expiration(Date.from(exp))
-            .signWith(key)
-            .compact();
+            .expiration(Date.from(exp));
+        if (user.getUsername() != null) {
+            builder.claim("username", user.getUsername());
+        }
+        if (user.getEmail() != null) {
+            builder.claim("email", user.getEmail());
+        }
+        return builder.signWith(key).compact();
     }
 
     /** Parse and verify a token; throws {@link JwtException} if invalid/expired. */
