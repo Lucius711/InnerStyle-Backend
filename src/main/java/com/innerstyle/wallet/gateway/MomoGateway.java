@@ -6,10 +6,12 @@ import com.innerstyle.wallet.config.PaymentProperties;
 import com.innerstyle.wallet.entity.PaymentOrder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -26,7 +28,18 @@ public class MomoGateway {
 
     private final PaymentProperties props;
     private final CryptoSigner signer;
-    private final RestClient restClient = RestClient.create();
+    // Explicit connect/read timeouts (finding M4): without them a slow/unreachable MoMo endpoint
+    // blocks the servlet thread indefinitely and can exhaust the pool.
+    private final RestClient restClient = RestClient.builder()
+        .requestFactory(momoRequestFactory())
+        .build();
+
+    private static SimpleClientHttpRequestFactory momoRequestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Duration.ofSeconds(5).toMillis());
+        factory.setReadTimeout((int) Duration.ofSeconds(10).toMillis());
+        return factory;
+    }
 
     /** Create a MoMo payment and return the URL the client opens to pay. */
     @SuppressWarnings("unchecked")

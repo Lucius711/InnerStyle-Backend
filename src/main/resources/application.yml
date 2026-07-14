@@ -27,7 +27,9 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       ssl:
-        enabled: true
+        # env-driven (finding m5): TLS is pointless against a local plaintext Redis in dev and
+        # breaks the connection; enable it (REDIS_SSL_ENABLED=true) for managed/prod Redis.
+        enabled: ${REDIS_SSL_ENABLED:false}
       timeout: 2s
       lettuce:
         pool:
@@ -61,11 +63,13 @@ spring:
 
 # Application-specific configuration (bound to @ConfigurationProperties)
 app:
-  # CORS allow-list (origin patterns, wildcards allowed). Comma-separated when set via env.
-  # Defaults cover the Vite dev server (localhost:5173), any localhost/127.0.0.1 port,
-  # and ngrok tunnels — so the in-browser 3D viewer can load Meshy textures cross-origin.
+  # CORS allow-list (origin patterns). Finding M2: the committed default is now a tight allow-list
+  # of known origins only. Because allowCredentials(true) is set, broad wildcards
+  # (http://localhost:*, https://*.vercel.app, *.ngrok.*) are an over-wide trust boundary and were
+  # removed from the default. Add extra origins (ngrok tunnels, Vercel previews) explicitly via
+  # APP_CORS_ALLOWED_ORIGIN_PATTERNS per environment; keep production on the real frontend origin.
   cors:
-    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:https://*.vercel.app,http://localhost:5173,http://localhost:*,http://127.0.0.1:*,https://*.ngrok-free.app,https://*.ngrok.io,https://*.ngrok.app,https://www.innerstyle.online/}
+    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:5173,http://127.0.0.1:5173,https://www.innerstyle.online}
   # Resend transactional email over HTTPS (port 443). Set RESEND_API_KEY to use it in preference
   # to SMTP — required on cloud hosts that block outbound SMTP (e.g. Railway on non-Pro plans).
   # Leave RESEND_API_KEY blank to fall back to SMTP (spring.mail.*) or the LoggingEmailSender.
@@ -158,6 +162,20 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+# Observability (finding m6): expose health + metrics (and prometheus when a registry is present)
+# so payment / Meshy failures and abuse are visible in production.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
 logging:
   level:
     com.innerstyle: INFO
+  # Include the per-request correlation id (set by CorrelationIdFilter) in every log line.
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"

@@ -4,6 +4,8 @@ import com.innerstyle.auth.entity.User;
 import com.innerstyle.auth.repository.UserRepository;
 import com.innerstyle.membership.repository.MembershipPlanRepository;
 import com.innerstyle.membership.service.CreditService;
+import com.innerstyle.print.entity.PrintOrder;
+import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import com.innerstyle.print.repository.PrintOrderRepository;
 import com.innerstyle.wallet.config.PaymentProperties;
 import com.innerstyle.wallet.dto.response.PaymentResultResponse;
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -99,7 +102,7 @@ class PaymentServiceImplTest {
     void vnpayIpn_unknownOrder() {
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123")).thenReturn(Optional.empty());
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.empty());
 
         assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("01");
     }
@@ -109,7 +112,7 @@ class PaymentServiceImplTest {
     void vnpayIpn_amountMismatch() {
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("50000")));
-        when(paymentOrderRepository.findByOrderCode("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.PENDING)));
 
         assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("04");
@@ -121,7 +124,7 @@ class PaymentServiceImplTest {
     void vnpayIpn_alreadyConfirmed() {
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
 
         assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("02");
@@ -134,7 +137,7 @@ class PaymentServiceImplTest {
         PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123")).thenReturn(Optional.of(order));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
 
         assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("00");
         assertThat(order.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
@@ -149,7 +152,7 @@ class PaymentServiceImplTest {
         PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123")).thenReturn(Optional.of(order));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
 
         PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
 
@@ -163,7 +166,7 @@ class PaymentServiceImplTest {
     void return_alreadySucceeded_notReCredited() {
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
 
         PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
@@ -178,12 +181,93 @@ class PaymentServiceImplTest {
     void return_badSignature_failed() {
         when(vnpayGateway.verify(anyMap()))
             .thenReturn(verification(false, false, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCode("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.PENDING)));
 
         PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
 
         assertThat(res.status()).isEqualTo("FAILED");
         assertThat(res.credited()).isFalse();
+    }
+
+    // ------------------------------------------------------------------ MoMo IPN
+
+    @Test
+    @DisplayName("MoMo IPN: valid success → SUBSCRIPTION activates plan")
+    void momoIpn_success_activatesPlan() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        when(momoGateway.verify(anyMap()))
+            .thenReturn(verification(true, true, new BigDecimal("100000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+
+        service.handleMomoIpn(Map.of());
+
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
+        verify(creditService).activatePlan(any(), eq("PRO"));
+    }
+
+    @Test
+    @DisplayName("MoMo IPN: invalid signature → never settled")
+    void momoIpn_badSignature_noSettle() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        when(momoGateway.verify(anyMap()))
+            .thenReturn(verification(false, true, new BigDecimal("100000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+
+        service.handleMomoIpn(Map.of());
+
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        verify(creditService, never()).activatePlan(any(), any());
+    }
+
+    @Test
+    @DisplayName("MoMo IPN: already succeeded → idempotent, not re-credited")
+    void momoIpn_alreadySucceeded_notReCredited() {
+        when(momoGateway.verify(anyMap()))
+            .thenReturn(verification(true, true, new BigDecimal("100000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
+            .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
+
+        service.handleMomoIpn(Map.of());
+
+        verify(creditService, never()).activatePlan(any(), any());
+    }
+
+    @Test
+    @DisplayName("MoMo IPN: amount mismatch → never settled")
+    void momoIpn_amountMismatch_noSettle() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        when(momoGateway.verify(anyMap()))
+            .thenReturn(verification(true, true, new BigDecimal("50000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+
+        service.handleMomoIpn(Map.of());
+
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        verify(creditService, never()).activatePlan(any(), any());
+    }
+
+    // ------------------------------------------------------------------ PRINT fulfilment
+
+    @Test
+    @DisplayName("VNPay IPN: PRINT purpose success → print order marked PAID")
+    void vnpayIpn_printPurpose_marksPrintOrderPaid() {
+        UUID printOrderId = UUID.randomUUID();
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        order.setPurpose(PaymentPurpose.PRINT);
+        order.setReference(printOrderId.toString());
+
+        PrintOrder printOrder = new PrintOrder();
+        printOrder.setStatus(PrintOrderStatus.PENDING);
+
+        when(vnpayGateway.verify(anyMap()))
+            .thenReturn(verification(true, true, new BigDecimal("100000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+        when(printOrderRepository.findById(printOrderId)).thenReturn(Optional.of(printOrder));
+
+        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("00");
+        assertThat(printOrder.getStatus()).isEqualTo(PrintOrderStatus.PAID);
+        verify(printOrderRepository).save(printOrder);
+        verify(creditService, never()).activatePlan(any(), any());
     }
 }

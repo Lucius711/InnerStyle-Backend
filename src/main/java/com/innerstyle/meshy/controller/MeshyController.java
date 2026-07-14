@@ -269,12 +269,13 @@ public class MeshyController {
 
     @PutMapping(value = "/tasks/{id}/usdz", consumes = "model/vnd.usdz+zip")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary = "Cache the browser-built iOS AR Quick Look (USDZ) file for a task. iOS "
+    @Operation(summary = "Cache the browser-built iOS AR Quick Look (USDZ) file for MY task. iOS "
             + "Quick Look cannot launch from an in-browser blob: URL, so the frontend uploads the "
-            + "USDZ bytes here and then loads them via GET /tasks/{id}/model?format=usdz. Public, "
-            + "like the model proxy, so the standalone AR page can populate it without auth.")
-    public void cacheTaskUsdz(@PathVariable UUID id, @RequestBody byte[] usdz) {
-        meshyTaskService.storeUsdz(id, usdz);
+            + "USDZ bytes here and then loads them via GET /tasks/{id}/model?format=usdz. Owner only "
+            + "(the write requires auth + ownership); the subsequent GET stays public for Quick Look.")
+    public void cacheTaskUsdz(@PathVariable UUID id, @RequestBody byte[] usdz,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        meshyTaskService.storeUsdz(id, principal.getId(), usdz);
     }
 
     @PutMapping(value = "/tasks/{id}/model", consumes = "model/gltf-binary")

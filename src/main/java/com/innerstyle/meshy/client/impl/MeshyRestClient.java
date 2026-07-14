@@ -1,5 +1,6 @@
 package com.innerstyle.meshy.client.impl;
 
+import com.innerstyle.common.exception.UpstreamRequestException;
 import com.innerstyle.common.exception.UpstreamServiceException;
 import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
@@ -32,6 +33,19 @@ public class MeshyRestClient implements MeshyClient {
 
     public MeshyRestClient(@Qualifier(MeshyClientConfig.MESHY_REST_CLIENT) RestClient restClient) {
         this.restClient = restClient;
+    }
+
+    /**
+     * Classify a Meshy HTTP error: a 4xx means Meshy rejected OUR input (e.g. an unriggable model
+     * or an unreachable model URL) — surface it as a 422 so the client can tell the user to try a
+     * different model; a 5xx / other is a provider problem → 502. The raw Meshy reason is logged.
+     */
+    private RuntimeException meshyError(String op, RestClientResponseException ex) {
+        log.error("Meshy {} failed: {} {}", op, ex.getStatusCode(), ex.getResponseBodyAsString());
+        if (ex.getStatusCode().is4xxClientError()) {
+            return new UpstreamRequestException("meshy.inputRejected");
+        }
+        return new UpstreamServiceException("meshy.upstreamError");
     }
 
     @Override
@@ -94,9 +108,7 @@ public class MeshyRestClient implements MeshyClient {
                 .retrieve()
                 .body(MeshyTaskDto.class);
         } catch (RestClientResponseException ex) {
-            log.error("Meshy GET {} failed: {} {}", type, ex.getStatusCode(),
-                ex.getResponseBodyAsString());
-            throw new UpstreamServiceException("meshy.upstreamError");
+            throw meshyError("GET " + type, ex);
         } catch (RuntimeException ex) {
             log.error("Meshy GET {} error", type, ex);
             throw new UpstreamServiceException("meshy.upstreamError");
@@ -115,9 +127,7 @@ public class MeshyRestClient implements MeshyClient {
             }
             return response.getResult();
         } catch (RestClientResponseException ex) {
-            log.error("Meshy POST {} failed: {} {}", path, ex.getStatusCode(),
-                ex.getResponseBodyAsString());
-            throw new UpstreamServiceException("meshy.upstreamError");
+            throw meshyError("POST " + path, ex);
         } catch (RuntimeException ex) {
             log.error("Meshy POST {} error", path, ex);
             throw new UpstreamServiceException("meshy.upstreamError");

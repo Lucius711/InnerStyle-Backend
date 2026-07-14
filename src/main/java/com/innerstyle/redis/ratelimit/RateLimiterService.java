@@ -9,7 +9,9 @@ import java.util.List;
 
 /**
  * Fixed-window rate limiter backed by a single atomic Redis Lua script (INCR + EXPIRE on first
- * hit). FAIL-OPEN: if Redis errors, the request is allowed (availability over strictness).
+ * hit). Fail behaviour is per-call (finding M5): benign read/API buckets fail-OPEN (availability
+ * over strictness), but security-sensitive buckets (login, register, email OTP, payment) fail-CLOSED
+ * so a Redis outage cannot silently remove brute-force / abuse protection.
  */
 @Slf4j
 @Service
@@ -39,11 +41,28 @@ public class RateLimiterService {
      * @return decision with remaining count and retry-after seconds
      */
     public Decision check(String key, int limit, long windowMs) {
+        return check(key, limit, windowMs, false);
+    }
+
+    /**
+     * @param key        the bucket key (already namespaced)
+     * @param limit      max requests per window
+     * @param windowMs   window length in milliseconds
+     * @param failClosed when true, a Redis error DENIES the request (use for login/payment/OTP);
+     *                   when false, a Redis error ALLOWS it (benign read/API buckets)
+     * @return decision with remaining count and retry-after seconds
+     */
+    public Decision check(String key, int limit, long windowMs, boolean failClosed) {
         long count;
         try {
             Long result = redis.execute(script, List.of(key), String.valueOf(windowMs));
             count = result == null ? 0 : result;
         } catch (RuntimeException ex) {
+            if (failClosed) {
+                log.warn("Rate limiter unavailable ({}), DENYING sensitive request (fail-closed)",
+                    ex.getMessage());
+                return new Decision(false, 0, Math.max(1, windowMs / 1000));
+            }
             log.debug("Rate limiter unavailable ({}), allowing request", ex.getMessage());
             return new Decision(true, limit, 0);
         }

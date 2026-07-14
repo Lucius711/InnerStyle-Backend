@@ -14,6 +14,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -87,6 +88,11 @@ public class PaymentOrder {
 
     @Column(name = "expires_at")
     private Instant expiresAt;
+
+    /** Optimistic lock guard; blocks concurrent settlement of the same order (finding C1). */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

@@ -38,7 +38,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private enum Scope { IP, USER }
 
-    private record Rule(String bucket, int limit, long windowMs, Scope scope) {
+    private record Rule(String bucket, int limit, long windowMs, Scope scope, boolean failClosed) {
     }
 
     @Override
@@ -55,7 +55,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         String id = rule.scope() == Scope.USER ? currentUserId(request) : clientIp(request);
         String key = keys.rateLimit(rule.bucket(), id);
-        RateLimiterService.Decision decision = rateLimiter.check(key, rule.limit(), rule.windowMs());
+        RateLimiterService.Decision decision =
+            rateLimiter.check(key, rule.limit(), rule.windowMs(), rule.failClosed());
 
         response.setHeader("X-RateLimit-Limit", String.valueOf(rule.limit()));
         response.setHeader("X-RateLimit-Remaining", String.valueOf(decision.remaining()));
@@ -79,23 +80,26 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/common/payments/") || path.startsWith("/api/webhooks/")) {
             return null;
         }
+        // Security-sensitive buckets fail CLOSED (finding M5): a Redis outage must not silently
+        // disable brute-force / abuse protection on auth + payment.
         if (path.contains("/auth/login")) {
-            return new Rule("login", props.loginPerMinute(), MINUTE_MS, Scope.IP);
+            return new Rule("login", props.loginPerMinute(), MINUTE_MS, Scope.IP, true);
         }
         if (path.endsWith("/auth/register")) {
-            return new Rule("register", props.registerPerHour(), HOUR_MS, Scope.IP);
+            return new Rule("register", props.registerPerHour(), HOUR_MS, Scope.IP, true);
         }
         if (path.contains("/auth/forgot-password") || path.contains("/auth/resend-verification")) {
-            return new Rule("email", props.emailPer10min(), TEN_MIN_MS, Scope.IP);
+            return new Rule("email", props.emailPer10min(), TEN_MIN_MS, Scope.IP, true);
         }
         if (post && path.startsWith("/api/common/3d/")) {
-            return new Rule("generation", props.generationPerMinute(), MINUTE_MS, Scope.USER);
+            return new Rule("generation", props.generationPerMinute(), MINUTE_MS, Scope.USER, false);
         }
         if (path.endsWith("/wallet/topup")) {
-            return new Rule("payment", props.paymentPerMinute(), MINUTE_MS, Scope.USER);
+            return new Rule("payment", props.paymentPerMinute(), MINUTE_MS, Scope.USER, true);
         }
+        // Benign general API traffic fails OPEN (availability over strictness).
         if (path.startsWith("/api/")) {
-            return new Rule("api", props.defaultPerMinute(), MINUTE_MS, Scope.IP);
+            return new Rule("api", props.defaultPerMinute(), MINUTE_MS, Scope.IP, false);
         }
         return null;
     }

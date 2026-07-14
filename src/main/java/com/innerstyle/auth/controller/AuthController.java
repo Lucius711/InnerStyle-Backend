@@ -1,5 +1,6 @@
 package com.innerstyle.auth.controller;
 
+import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.request.LoginRequest;
 import com.innerstyle.auth.dto.request.RefreshTokenRequest;
 import com.innerstyle.auth.dto.request.RegisterRequest;
@@ -11,10 +12,14 @@ import com.innerstyle.common.response.ApiResponse;
 import com.innerstyle.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,6 +32,10 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>Supports local sign-up / sign-in (email + password) as well as social sign-in
  * (Google / Facebook). No email-verification / OTP step is required for local accounts.
+ *
+ * <p>Finding M3: the long-lived refresh token is delivered as an HttpOnly, path-scoped cookie so
+ * front-end JavaScript (and therefore any XSS) cannot read it. {@code /refresh} and {@code /logout}
+ * read the token from that cookie, falling back to a request body for non-browser clients.
  */
 @Tag(name = "Auth")
 @RestController
@@ -34,40 +43,60 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuthController {
 
+    /** HttpOnly refresh cookie, scoped to the auth path so it is only sent where it is needed. */
+    private static final String REFRESH_COOKIE = "refresh_token";
+    private static final String REFRESH_COOKIE_PATH = "/api/user/auth";
+
     private final AuthService authService;
+    private final JwtProperties jwtProperties;
+
+    /** Secure/SameSite are environment-driven so dev (http, Vite proxy) and prod (https) both work. */
+    @Value("${app.auth.refresh-cookie.secure:false}")
+    private boolean refreshCookieSecure;
+
+    @Value("${app.auth.refresh-cookie.same-site:Lax}")
+    private String refreshCookieSameSite;
 
     @Operation(summary = "Register a new account with email + password")
     @PostMapping("/register")
     public ApiResponse<AuthTokensResponse> register(@Valid @RequestBody RegisterRequest request,
-            HttpServletRequest http) {
-        return ApiResponse.success("auth.registered",
-                authService.register(request.username(), request.password(), request.fullName(),
-                        clientIp(http), userAgent(http)));
+            HttpServletRequest http, HttpServletResponse response) {
+        AuthTokensResponse tokens = authService.register(request.username(), request.password(),
+                request.fullName(), clientIp(http), userAgent(http));
+        setRefreshCookie(response, tokens.refreshToken());
+        return ApiResponse.success("auth.registered", tokens);
     }
 
     @Operation(summary = "Log in with email + password")
     @PostMapping("/login")
     public ApiResponse<AuthTokensResponse> login(@Valid @RequestBody LoginRequest request,
-            HttpServletRequest http) {
-        return ApiResponse.success("auth.loggedIn",
-                authService.login(request.username(), request.password(),
-                        clientIp(http), userAgent(http)));
+            HttpServletRequest http, HttpServletResponse response) {
+        AuthTokensResponse tokens = authService.login(request.username(), request.password(),
+                clientIp(http), userAgent(http));
+        setRefreshCookie(response, tokens.refreshToken());
+        return ApiResponse.success("auth.loggedIn", tokens);
     }
 
-    @Operation(summary = "Exchange a refresh token for a new access token")
+    @Operation(summary = "Exchange a refresh token (HttpOnly cookie or body) for a new access token")
     @PostMapping("/refresh")
-    public ApiResponse<AuthTokensResponse> refresh(@Valid @RequestBody RefreshTokenRequest request,
-            HttpServletRequest http) {
-        return ApiResponse.success("auth.refreshed",
-                authService.refresh(request.getRefreshToken(), clientIp(http), userAgent(http)));
+    public ApiResponse<AuthTokensResponse> refresh(
+            @RequestBody(required = false) RefreshTokenRequest request,
+            HttpServletRequest http, HttpServletResponse response) {
+        String refreshToken = resolveRefreshToken(http, request);
+        AuthTokensResponse tokens = authService.refresh(refreshToken, clientIp(http), userAgent(http));
+        setRefreshCookie(response, tokens.refreshToken());
+        return ApiResponse.success("auth.refreshed", tokens);
     }
 
     @Operation(summary = "Log out (revoke the refresh token + blacklist the access token)")
     @PostMapping("/logout")
     public ApiResponse<Void> logout(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
-            @Valid @RequestBody RefreshTokenRequest request) {
-        authService.logout(request.getRefreshToken(), bearerToken(authHeader));
+            @RequestBody(required = false) RefreshTokenRequest request,
+            HttpServletRequest http, HttpServletResponse response) {
+        String refreshToken = resolveRefreshToken(http, request);
+        authService.logout(refreshToken, bearerToken(authHeader));
+        clearRefreshCookie(response);
         return ApiResponse.success("auth.loggedOut");
     }
 
@@ -75,10 +104,63 @@ public class AuthController {
     @PostMapping("/oauth/{provider}")
     public ApiResponse<AuthTokensResponse> socialLogin(@PathVariable String provider,
             @Valid @RequestBody SocialLoginRequest request,
-            HttpServletRequest http) {
+            HttpServletRequest http, HttpServletResponse response) {
         OauthProvider parsed = parseProvider(provider);
-        return ApiResponse.success("auth.loggedIn",
-                authService.socialLogin(parsed, request.getToken(), clientIp(http), userAgent(http)));
+        AuthTokensResponse tokens = authService.socialLogin(parsed, request.getToken(),
+                clientIp(http), userAgent(http));
+        setRefreshCookie(response, tokens.refreshToken());
+        return ApiResponse.success("auth.loggedIn", tokens);
+    }
+
+    // --------------------------------------------------------------------- refresh cookie helpers
+
+    private void setRefreshCookie(HttpServletResponse response, String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return;
+        }
+        ResponseCookie cookie = ResponseCookie.from(REFRESH_COOKIE, refreshToken)
+                .httpOnly(true)
+                .secure(refreshCookieSecure)
+                .sameSite(refreshCookieSameSite)
+                .path(REFRESH_COOKIE_PATH)
+                .maxAge(jwtProperties.refreshTtl())
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
+    private void clearRefreshCookie(HttpServletResponse response) {
+        ResponseCookie cookie = ResponseCookie.from(REFRESH_COOKIE, "")
+                .httpOnly(true)
+                .secure(refreshCookieSecure)
+                .sameSite(refreshCookieSameSite)
+                .path(REFRESH_COOKIE_PATH)
+                .maxAge(0)
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
+    /** Prefer the HttpOnly cookie; fall back to a request body for non-browser clients. */
+    private String resolveRefreshToken(HttpServletRequest http, RefreshTokenRequest body) {
+        String fromCookie = readRefreshCookie(http);
+        if (fromCookie != null && !fromCookie.isBlank()) {
+            return fromCookie;
+        }
+        if (body != null && body.getRefreshToken() != null && !body.getRefreshToken().isBlank()) {
+            return body.getRefreshToken();
+        }
+        throw new BadRequestException("1.refreshToken.required");
+    }
+
+    private String readRefreshCookie(HttpServletRequest http) {
+        if (http.getCookies() == null) {
+            return null;
+        }
+        for (Cookie cookie : http.getCookies()) {
+            if (REFRESH_COOKIE.equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
     }
 
     private String bearerToken(String authHeader) {

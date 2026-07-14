@@ -187,12 +187,14 @@ class MeshyTaskServiceImplTest {
     @Test
     void storeUsdzPersistsBytesForExistingTask() {
         UUID id = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
         MeshyTask task = new MeshyTask();
         task.setId(id);
+        task.setUserId(owner);
         when(taskRepository.findById(id)).thenReturn(Optional.of(task));
         when(usdzRepository.findById(id)).thenReturn(Optional.empty());
 
-        service.storeUsdz(id, new byte[] {9, 8, 7, 6});
+        service.storeUsdz(id, owner, new byte[] {9, 8, 7, 6});
 
         ArgumentCaptor<com.innerstyle.meshy.entity.MeshyTaskUsdz> captor =
             ArgumentCaptor.forClass(com.innerstyle.meshy.entity.MeshyTaskUsdz.class);
@@ -206,8 +208,21 @@ class MeshyTaskServiceImplTest {
     void storeUsdzRejectsEmptyBody() {
         UUID id = UUID.randomUUID();
 
-        assertThatThrownBy(() -> service.storeUsdz(id, new byte[0]))
+        assertThatThrownBy(() -> service.storeUsdz(id, UUID.randomUUID(), new byte[0]))
             .isInstanceOf(BadRequestException.class)
             .hasMessage("meshy.usdz.empty");
+    }
+
+    @Test
+    void storeUsdzRejectsNonOwner() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        task.setUserId(UUID.randomUUID());
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        assertThatThrownBy(() -> service.storeUsdz(id, UUID.randomUUID(), new byte[] {1, 2}))
+            .isInstanceOf(ResourceNotFoundException.class)
+            .hasMessage("meshy.task.notFound");
     }
 }

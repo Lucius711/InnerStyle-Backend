@@ -134,7 +134,7 @@ public interface MeshyTaskService {
      * @param id   the task id (must exist)
      * @param data the USDZ file bytes
      */
-    void storeUsdz(UUID id, byte[] data);
+    void storeUsdz(UUID id, UUID userId, byte[] data);
 
     /**
      * Store a freshly captured preview image (PNG) for a task and re-point the task's

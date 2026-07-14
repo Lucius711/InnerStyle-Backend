@@ -693,11 +693,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     @Override
     @Transactional
-    public void storeUsdz(UUID id, byte[] data) {
+    public void storeUsdz(UUID id, UUID userId, byte[] data) {
         if (data == null || data.length == 0) {
             throw new BadRequestException("meshy.usdz.empty");
         }
         MeshyTask task = getTaskOrThrow(id);
+        // Ownership guard (finding M1): only the task owner may cache its AR asset. 404 (not 403)
+        // on mismatch so a valid task id is not confirmed to a non-owner.
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
         MeshyTaskUsdz usdz = usdzRepository.findById(task.getId()).orElseGet(MeshyTaskUsdz::new);
         usdz.setTaskId(task.getId());
         usdz.setData(data);

@@ -85,11 +85,9 @@ public class SecurityConfig {
                         // Captured preview image, loaded by a plain <img> tag (no auth header
                         // possible).
                         .requestMatchers(HttpMethod.GET, "/api/common/3d/tasks/*/thumbnail").permitAll()
-                        // The standalone AR page (reached by scanning the QR, possibly logged-out)
-                        // caches
-                        // its browser-built USDZ here so iOS Quick Look can load it as a real .usdz
-                        // URL.
-                        .requestMatchers(HttpMethod.PUT, "/api/common/3d/tasks/*/usdz").permitAll()
+                        // NOTE: the browser-built USDZ upload (PUT .../usdz) is intentionally NOT
+                        // public — it requires auth + ownership (finding M1) to stop anyone
+                        // overwriting a task's AR asset. The subsequent GET .../model stays public.
                         // Everything else under /3d (create jobs + the private task library) requires
                         // auth.
                         .requestMatchers("/api/common/3d/**").authenticated()

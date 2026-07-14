@@ -33,14 +33,20 @@ public class CryptoSigner {
         }
     }
 
-    /** Constant-time comparison to avoid timing side-channels on signature checks. */
+    /**
+     * Constant-time comparison to avoid timing side-channels on signature checks. Hex is compared
+     * case-insensitively (finding n1): our HMAC output is lower-case, but a gateway may return
+     * upper-case hex, which must still verify.
+     */
     public boolean matches(String expected, String actual) {
         if (expected == null || actual == null || expected.length() != actual.length()) {
             return false;
         }
+        String a = expected.toLowerCase();
+        String b = actual.toLowerCase();
         int diff = 0;
-        for (int i = 0; i < expected.length(); i++) {
-            diff |= expected.charAt(i) ^ actual.charAt(i);
+        for (int i = 0; i < a.length(); i++) {
+            diff |= a.charAt(i) ^ b.charAt(i);
         }
         return diff == 0;
     }

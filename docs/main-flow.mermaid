@@ -1,0 +1,36 @@
+%% InnerStyle - Main business flow (standard flowchart)
+%% Oval = Start/End | Rectangle = Process (verb) | Diamond = Decision (Yes/No) | Parallelogram = I/O
+%% Single direction, top -> bottom. Every exit branch ends at an End.
+%% Note: downloading the model does NOT change state - the model stays SUCCEEDED in the
+%% library, so the user can download AND still place a print order. Download is an optional
+%% step; "Place print order?" is the real decision.
+flowchart TD
+
+    START([Start]) --> P1[Log in / Sign up]
+    P1 --> IO1[/Enter image or prompt/]
+    IO1 --> P2[Deduct credit]
+    P2 --> D1{Enough credit?}
+
+    D1 -- No --> E1[Show credit error] --> END1([End])
+    D1 -- Yes --> P3[Call MeshyAI to build model]
+
+    P3 --> P4[Wait for MeshyAI]
+    P4 --> D2{Build succeeded?}
+
+    D2 -- No --> E2[Refund credit] --> END2([End])
+    D2 -- Yes --> P5[Edit model]
+
+    P5 --> IO2[/Download model - optional/]
+    IO2 --> D3{Place print order?}
+
+    D3 -- No --> END3([End])
+    D3 -- Yes --> P6[Create print order]
+
+    P6 --> P7[Pay via VNPay / MoMo]
+    P7 --> D4{Payment success?}
+
+    D4 -- No --> E4[Cancel order] --> END4([End])
+    D4 -- Yes --> P8[Confirm order paid]
+
+    P8 --> P9[Produce and ship - Staff]
+    P9 --> END([End])

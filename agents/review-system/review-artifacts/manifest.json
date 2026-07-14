@@ -1,0 +1,29 @@
+{
+  "run_id": "innerstyle-review-2026-07-14",
+  "generated_at": "2026-07-14T00:00:00Z",
+  "orchestrator": "00-orchestrator.md",
+  "mode": "risk-weighted execution (crown-jewel-first, not exhaustive line-by-line)",
+  "stack_fingerprint": {
+    "backend": "Spring Boot 3.3.5, Java 21, PostgreSQL, Flyway (22 migrations), Redis, JWT, MapStruct",
+    "frontend": "React 18, Vite 5, Three.js/R3F/drei, Playwright e2e",
+    "backend_java_files": 182,
+    "backend_test_files": 10,
+    "frontend_src_files": 85,
+    "ci_cd": "none (.github/workflows absent)"
+  },
+  "waves": [
+    {"wave": "W1", "reviewers": ["R01", "R04", "R16"], "status": "completed"},
+    {"wave": "W2", "reviewers": ["R02", "R03", "R05", "R07", "R08", "R09", "R10"], "status": "completed"},
+    {"wave": "W3", "reviewers": ["R06"], "status": "completed"},
+    {"wave": "W4", "reviewers": ["R11", "R12", "R13", "R14"], "status": "completed"},
+    {"wave": "W5", "reviewers": ["R15"], "status": "completed"},
+    {"wave": "W6", "reviewers": ["orchestrator-merge"], "status": "completed"}
+  ],
+  "artifacts": {
+    "findings": "review-artifacts/findings.json",
+    "final_report": "review-artifacts/FINAL-REPORT.md",
+    "coverage": "COVERAGE.md"
+  },
+  "counts": {"CRITICAL": 2, "MAJOR": 6, "MINOR": 6, "NIT": 2, "total": 16},
+  "notes": "Reviewers with findings emitted into the consolidated findings.json keyed by reviewer id. Files actually inspected this run: application.yml, .env(redacted), .gitignore, wallet/payment migration, meshy-link migration, SecurityConfig, JwtService, JwtAuthenticationFilter, VnpayGateway, MomoGateway, CryptoSigner, GatewayVerification, PaymentServiceImpl, MeshyController, MeshyClientConfig, RateLimiterService, frontend lib/http.js, locales/en.js+vi.js. Remaining files assessed at directory/grep level; deeper passes recommended where flagged."
+}

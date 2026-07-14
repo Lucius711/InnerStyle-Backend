@@ -86,7 +86,7 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public Map<String, String> handleVnpayIpn(Map<String, String> params) {
         GatewayVerification v = vnpayGateway.verify(params);
-        PaymentOrder order = paymentOrderRepository.findByOrderCode(v.orderCode()).orElse(null);
+        PaymentOrder order = lockOrder(v.orderCode());
         recordCallback(order, PaymentProvider.VNPAY, params, v, PaymentCallbackKind.IPN);
 
         if (!v.signatureValid()) {
@@ -109,7 +109,7 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public void handleMomoIpn(Map<String, String> params) {
         GatewayVerification v = momoGateway.verify(params);
-        PaymentOrder order = paymentOrderRepository.findByOrderCode(v.orderCode()).orElse(null);
+        PaymentOrder order = lockOrder(v.orderCode());
         recordCallback(order, PaymentProvider.MOMO, params, v, PaymentCallbackKind.IPN);
 
         if (!v.signatureValid()) {
@@ -132,7 +132,7 @@ public class PaymentServiceImpl implements PaymentService {
         GatewayVerification v = provider == PaymentProvider.VNPAY
             ? vnpayGateway.verify(params)
             : momoGateway.verify(params);
-        PaymentOrder order = paymentOrderRepository.findByOrderCode(v.orderCode()).orElse(null);
+        PaymentOrder order = lockOrder(v.orderCode());
         recordCallback(order, provider, params, v, PaymentCallbackKind.RETURN);
 
         if (!v.signatureValid() || order == null) {
@@ -154,6 +154,18 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     // --------------------------------------------------------------------- helpers
+
+    /**
+     * Load the order under a pessimistic write lock so concurrent / retried callbacks for the
+     * same order serialize on the row and cannot both pass the SUCCEEDED check + settle (C1).
+     * Returns null when the callback carries no / an unknown order code.
+     */
+    private PaymentOrder lockOrder(String orderCode) {
+        if (orderCode == null || orderCode.isBlank()) {
+            return null;
+        }
+        return paymentOrderRepository.findByOrderCodeForUpdate(orderCode).orElse(null);
+    }
 
     private PaymentOrder newOrder(User user, PaymentPurpose purpose, String reference,
                                   PaymentProvider provider, BigDecimal amount, String description) {
