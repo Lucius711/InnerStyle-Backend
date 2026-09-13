@@ -29,3 +29,23 @@ jobs:
           JWT_SECRET: ci-only-non-secret-value-at-least-32-bytes-long-1234
           SPRING_PROFILES_ACTIVE: test
         run: mvn -B --no-transfer-progress verify
+
+  deploy:
+    needs: build-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to OVH VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+            cd ~/innerstyle/InnerStyle-Backend
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up -d --build backend
+            docker image prune -f

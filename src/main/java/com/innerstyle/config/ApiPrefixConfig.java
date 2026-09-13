@@ -24,7 +24,13 @@ public class ApiPrefixConfig implements WebMvcConfigurer {
 
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
+        // Exclude springdoc-openapi's own controllers (e.g. OpenApiWebMvcResource, which serves
+        // /v3/api-docs) — they are @RestController too, so without this exclusion they'd
+        // silently get prefixed to /api/v3/api-docs, breaking swagger-ui.html's default fetch of
+        // /v3/api-docs (404 -> NoResourceFoundException). Keeps the doc comment's stated intent
+        // that Swagger UI / API docs stay untouched by the /api prefix.
         configurer.addPathPrefix("/api",
-                c -> c.isAnnotationPresent(RestController.class));
+                c -> c.isAnnotationPresent(RestController.class)
+                        && !c.getPackageName().startsWith("org.springdoc"));
     }
 }

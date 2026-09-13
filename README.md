@@ -1,14 +1,14 @@
 # InnerStyle Backend — 2D/Text → Animated 3D (MeshyAI)
 
 Spring Boot module that turns a 2D image (or a text prompt) into a textured, **colored**,
-optionally **posed**, **optimized**, **rigged** and **animated** 3D model using the
+optionally **posed**, **optimized**, **rigged** and  **animated** 3D model using the
 [MeshyAI](https://docs.meshy.ai) API. Built to the conventions in `claude.md` / `rules/`
-(Java 21 · Maven · Spring Data JPA · Flyway · Bean Validation · springdoc).
+(Java 21 · Maven · Spring Data JPA · Flyway ·  Bean Validation · springdoc).
 
 ## What it does
 
 | Capability | Endpoint | MeshyAI |
-|-----------|----------|---------|
+| ----------- | ---------- | --------- |
 | 2D image → 3D (geometry + color + pose) | `POST /common/3d/image-to-3d` | `image-to-3d` |
 | Text → 3D mesh (preview) | `POST /common/3d/text-to-3d` | `text-to-3d` (preview) |
 | Add color/texture to a preview | `POST /common/3d/refine` | `text-to-3d` (refine) |
