@@ -3,6 +3,7 @@ package com.innerstyle.redis.ratelimit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.response.ErrorResponse;
+import com.innerstyle.common.web.ClientIpResolver;
 import com.innerstyle.redis.RedisKeys;
 import com.innerstyle.redis.config.RateLimitProperties;
 import jakarta.servlet.FilterChain;
@@ -113,10 +114,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request);
     }
 }

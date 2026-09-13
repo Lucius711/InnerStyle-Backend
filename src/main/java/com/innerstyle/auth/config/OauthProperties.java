@@ -16,6 +16,6 @@ public record OauthProperties(
     public record Google(@DefaultValue("") String clientId) {
     }
 
-    public record Facebook(@DefaultValue("") String appId) {
+    public record Facebook(@DefaultValue("") String appId, @DefaultValue("") String appSecret) {
     }
 }

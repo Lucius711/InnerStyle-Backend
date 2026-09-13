@@ -139,15 +139,19 @@ class MeshyTaskServiceImplTest {
         when(taskRepository.findByMeshyTaskId("meshy-xyz")).thenReturn(Optional.of(task));
         lenient().when(taskRepository.save(any(MeshyTask.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        // A real public host is required here (not e.g. "https://assets/model.glb"): mergeInto
+        // now runs webhook-payload URLs through the SsrfGuard used elsewhere in the codebase
+        // (ImageProxyController), which resolves the hostname and rejects anything that isn't a
+        // public http(s) address.
         var remote = new MeshyTaskDto("meshy-xyz", "image-to-3d", "SUCCEEDED", 100,
-            Map.of("glb", "https://assets/model.glb"), null, "https://assets/thumb.png",
+            Map.of("glb", "https://example.com/model.glb"), null, "https://example.com/thumb.png",
             null, null, 30, null, null, null);
 
         service.applyRemoteState(remote);
 
         assertThat(task.getStatus()).isEqualTo(MeshyTaskStatus.SUCCEEDED);
         assertThat(task.getProgress()).isEqualTo(100);
-        assertThat(task.getModelUrls()).containsEntry("glb", "https://assets/model.glb");
+        assertThat(task.getModelUrls()).containsEntry("glb", "https://example.com/model.glb");
         assertThat(task.getConsumedCredits()).isEqualTo(30);
     }
 

@@ -1,5 +1,6 @@
 package com.innerstyle.auth.service.impl;
 
+import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -54,6 +55,7 @@ public class AuthServiceImpl implements AuthService {
     private final LoginAuditRepository loginAuditRepository;
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
+    private final AuthProperties authProperties;
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
     private final TokenBlacklist tokenBlacklist;
@@ -64,6 +66,7 @@ public class AuthServiceImpl implements AuthService {
                            OauthAccountRepository oauthAccountRepository,
                            LoginAuditRepository loginAuditRepository,
                            JwtService jwtService, JwtProperties jwtProperties,
+                           AuthProperties authProperties,
                            RefreshTokenService refreshTokenService, UserMapper userMapper,
                            TokenBlacklist tokenBlacklist, PasswordEncoder passwordEncoder,
                            List<SocialTokenVerifier> socialVerifiers) {
@@ -73,6 +76,7 @@ public class AuthServiceImpl implements AuthService {
         this.loginAuditRepository = loginAuditRepository;
         this.jwtService = jwtService;
         this.jwtProperties = jwtProperties;
+        this.authProperties = authProperties;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
         this.tokenBlacklist = tokenBlacklist;
@@ -114,8 +118,17 @@ public class AuthServiceImpl implements AuthService {
     public AuthTokensResponse login(String username, String password, String ip, String userAgent) {
         String normalizedUsername = username.trim().toLowerCase();
         User user = userRepository.findByUsernameIgnoreCase(normalizedUsername).orElse(null);
+
+        if (user != null && isLocked(user)) {
+            audit(user.getId(), normalizedUsername, false, "account_locked", ip, userAgent);
+            throw new UnauthorizedException("auth.accountLocked");
+        }
+
         if (user == null || user.getPasswordHash() == null
                 || !passwordEncoder.matches(password, user.getPasswordHash())) {
+            if (user != null) {
+                registerFailedLogin(user);
+            }
             audit(user == null ? null : user.getId(), normalizedUsername, false,
                 "invalid_credentials", ip, userAgent);
             throw new UnauthorizedException("auth.invalidCredentials");
@@ -125,10 +138,31 @@ public class AuthServiceImpl implements AuthService {
             throw new UnauthorizedException("auth.accountInactive");
         }
 
+        user.setFailedLoginCount(0);
+        user.setLockedUntil(null);
         user.setLastLoginAt(Instant.now());
         userRepository.save(user);
         audit(user.getId(), normalizedUsername, true, "password", ip, userAgent);
         return issueTokens(user, ip, userAgent);
+    }
+
+    /** True while a prior lockout (see {@link #registerFailedLogin}) is still in effect. */
+    private boolean isLocked(User user) {
+        return user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now());
+    }
+
+    /**
+     * Increments the failed-login counter and locks the account once it reaches the configured
+     * threshold (finding TRUNG: this bookkeeping existed on the entity/config but was never
+     * wired up, leaving login with no server-side brute-force lockout at all).
+     */
+    private void registerFailedLogin(User user) {
+        int failures = user.getFailedLoginCount() + 1;
+        user.setFailedLoginCount(failures);
+        if (failures >= authProperties.maxFailedLogins()) {
+            user.setLockedUntil(Instant.now().plus(authProperties.lockDuration()));
+        }
+        userRepository.save(user);
     }
 
     @Override

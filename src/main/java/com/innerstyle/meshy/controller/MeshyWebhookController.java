@@ -7,12 +7,17 @@ import com.innerstyle.meshy.config.MeshyProperties;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.env.Environment;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Receives MeshyAI webhook callbacks when a task changes state. This is the
@@ -30,13 +35,23 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 @Tag(name = "Webhooks - MeshyAI")
 @RestController
-@RequiredArgsConstructor
 public class MeshyWebhookController {
 
     private static final String SECRET_HEADER = "X-Webhook-Secret";
+    /** Publicly-known placeholder shipped in .env.example; must never be used as a real secret. */
+    private static final String DEFAULT_SECRET = "change_me_random_secret";
+    private static final List<String> DEV_PROFILES = List.of("dev", "test", "local");
 
     private final MeshyTaskService meshyTaskService;
     private final MeshyProperties properties;
+    private final Environment environment;
+
+    public MeshyWebhookController(MeshyTaskService meshyTaskService, MeshyProperties properties,
+                                   Environment environment) {
+        this.meshyTaskService = meshyTaskService;
+        this.properties = properties;
+        this.environment = environment;
+    }
 
     @PostMapping("/webhooks/meshy")
     @Operation(summary = "MeshyAI task status callback")
@@ -48,16 +63,37 @@ public class MeshyWebhookController {
         return ApiResponse.success("meshy.webhook.received");
     }
 
+    /**
+     * Fail closed outside dev/test/local (finding TRUNG): an unset or still-default secret used
+     * to be accepted unconditionally, letting anyone forge task-completion callbacks. The
+     * scheduled poller (see class javadoc) is an existing fallback completion path, so rejecting
+     * unverifiable webhook calls here is safe — no state update is lost, only delayed.
+     */
     private void verifySecret(String provided) {
         String expected = properties.webhookSecret();
-        if (expected == null || expected.isBlank()) {
-            // No secret configured -> accept (development). Configure MESHY_WEBHOOK_SECRET
-            // in prod.
-            log.warn("Meshy webhook secret is not configured; accepting callback without verification");
-            return;
-        }
-        if (!expected.equals(provided)) {
+        boolean unconfigured = expected == null || expected.isBlank() || DEFAULT_SECRET.equals(expected.trim());
+        if (unconfigured) {
+            if (devProfileActive()) {
+                log.warn("Meshy webhook secret is not configured; accepting callback without "
+                    + "verification. INSECURE outside dev/test.");
+                return;
+            }
             throw new UnauthorizedException("meshy.webhook.unauthorized");
         }
+        if (provided == null || !constantTimeEquals(expected, provided)) {
+            throw new UnauthorizedException("meshy.webhook.unauthorized");
+        }
+    }
+
+    private boolean devProfileActive() {
+        return environment.getActiveProfiles().length == 0
+            || Arrays.stream(environment.getActiveProfiles())
+                .anyMatch(p -> DEV_PROFILES.contains(p.toLowerCase()));
+    }
+
+    private boolean constantTimeEquals(String expected, String provided) {
+        return MessageDigest.isEqual(
+            expected.getBytes(StandardCharsets.UTF_8),
+            provided.getBytes(StandardCharsets.UTF_8));
     }
 }

@@ -1,5 +1,6 @@
 package com.innerstyle.auth.service;
 
+import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -39,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -67,6 +69,11 @@ class AuthServiceImplTest {
         "test-secret-key-that-is-at-least-32-bytes-long!!", "innerstyle",
         Duration.ofMinutes(15), Duration.ofDays(7));
 
+    // A real record (avoids mocking a final type); mirrors application.yml defaults.
+    private final AuthProperties authProperties = new AuthProperties(
+        "http://localhost:5173", Duration.ofMinutes(15), 5, Duration.ofMinutes(15),
+        6, Duration.ofMinutes(10), 5, "no-reply@innerstyle.app", "InnerStyle");
+
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRepository.class);
@@ -84,8 +91,8 @@ class AuthServiceImplTest {
         passwordEncoder = mock(PasswordEncoder.class);
 
         service = new AuthServiceImpl(userRepository, roleRepository, oauthAccountRepository,
-            loginAuditRepository, jwtService, jwtProperties, refreshTokenService, userMapper,
-            tokenBlacklist, passwordEncoder, List.of(googleVerifier));
+            loginAuditRepository, jwtService, jwtProperties, authProperties, refreshTokenService,
+            userMapper, tokenBlacklist, passwordEncoder, List.of(googleVerifier));
     }
 
     // ------------------------------------------------------------------ socialLogin
@@ -141,7 +148,8 @@ class AuthServiceImplTest {
         service.socialLogin(OauthProvider.GOOGLE, "token", "1.2.3.4", "UA");
 
         ArgumentCaptor<User> userCap = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(userCap.capture());
+        // saved twice: once by linkOrCreate to persist the new user, once by socialLogin to record lastLoginAt
+        verify(userRepository, times(2)).save(userCap.capture());
         User created = userCap.getValue();
         assertThat(created.getEmail()).isEqualTo("new@example.com");
         assertThat(created.getFullName()).isEqualTo("New User");

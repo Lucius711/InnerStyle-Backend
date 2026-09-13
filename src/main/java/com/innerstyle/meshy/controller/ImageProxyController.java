@@ -2,6 +2,7 @@ package com.innerstyle.meshy.controller;
 
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.UpstreamServiceException;
+import com.innerstyle.meshy.util.SsrfGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
@@ -13,9 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -75,31 +74,9 @@ public class ImageProxyController {
 
     /** Validate scheme + reject private / loopback / link-local hosts (SSRF guard). */
     private URI validate(String url) {
-        URI uri;
-        try {
-            uri = URI.create(url.trim());
-        } catch (RuntimeException e) {
+        if (!SsrfGuard.isSafe(url)) {
             throw new BadRequestException("validation.image.invalid");
         }
-        String scheme = uri.getScheme();
-        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-            throw new BadRequestException("validation.image.invalid");
-        }
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) {
-            throw new BadRequestException("validation.image.invalid");
-        }
-        try {
-            for (InetAddress addr : InetAddress.getAllByName(host)) {
-                if (addr.isAnyLocalAddress() || addr.isLoopbackAddress()
-                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
-                    || addr.isMulticastAddress()) {
-                    throw new BadRequestException("validation.image.invalid");
-                }
-            }
-        } catch (UnknownHostException e) {
-            throw new BadRequestException("validation.image.invalid");
-        }
-        return uri;
+        return URI.create(url.trim());
     }
 }

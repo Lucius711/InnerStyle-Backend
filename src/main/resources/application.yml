@@ -116,6 +116,9 @@ app:
       client-id: ${GOOGLE_CLIENT_ID:}
     facebook:
       app-id: ${FACEBOOK_APP_ID:}
+      # Required alongside app-id to verify a Facebook token's audience via /debug_token.
+      # Leave both blank to skip the check (dev only).
+      app-secret: ${FACEBOOK_APP_SECRET:}
 
   # --- 3D print pricing (paid directly via VNPay/MoMo) ---
   # `fee` is the fallback; `prices` is the sell price (VND) per figurine height in cm.

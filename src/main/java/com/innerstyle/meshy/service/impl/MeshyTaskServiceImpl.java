@@ -54,6 +54,7 @@ import com.innerstyle.meshy.service.ContentModeration;
 import com.innerstyle.meshy.service.MeshToolRunner;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.meshy.util.MeshTransformer;
+import com.innerstyle.meshy.util.SsrfGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -1393,9 +1394,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
     }
 
-    /** Resolve a SUCCEEDED prior task of a specific type and return its entity. */
+    /**
+     * Resolve a SUCCEEDED prior task of a specific type and return its entity. Only the owning
+     * user may use their own task as a pipeline source (finding CAO-2: this used to skip the
+     * ownership check that every other task-accessing method enforces, letting any authenticated
+     * user chain remesh/retexture/rig/refine/animate/figurine-build off someone else's task).
+     */
     private MeshyTask requireSucceeded(UUID id, MeshyTaskType expectedType) {
         MeshyTask task = getTaskOrThrow(id);
+        UUID userId = currentUserIdOrThrow();
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
         if (expectedType != null && task.getTaskType() != expectedType) {
             throw new BadRequestException("meshy.task.notFound");
         }
@@ -1462,33 +1472,77 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (remote.getProgress() != null) {
             task.setProgress(remote.getProgress());
         }
-        if (!locallyEdited && remote.getModelUrls() != null && !remote.getModelUrls().isEmpty()) {
-            task.setModelUrls(remote.getModelUrls());
+        // Webhook payload URLs are attacker-influenced input (finding TRUNG: the webhook is only
+        // protected by a shared secret, and callers of this class later fetch these URLs
+        // server-side, e.g. downloadModel/fetchTexture/fetchThumbnailImage). Drop anything that
+        // isn't a safe public http(s) URL rather than trusting it blindly.
+        Map<String, String> safeModelUrls = safeUrlMap(remote.getModelUrls());
+        if (!locallyEdited && !safeModelUrls.isEmpty()) {
+            task.setModelUrls(safeModelUrls);
         }
-        if (remote.getTextureUrls() != null && !remote.getTextureUrls().isEmpty()) {
-            task.setTextureUrls(remote.getTextureUrls());
+        List<MeshyTextureDto> safeTextureUrls = safeTextures(remote.getTextureUrls());
+        if (!safeTextureUrls.isEmpty()) {
+            task.setTextureUrls(safeTextureUrls);
         }
-        if (!locallyEdited && remote.getThumbnailUrl() != null) {
+        String safeThumbnailUrl = safeUrl(remote.getThumbnailUrl());
+        if (!locallyEdited && safeThumbnailUrl != null) {
             // Cache the preview bytes now, while the signed Meshy URL is still valid, so the
             // thumbnail never breaks later when that CDN link expires. Point the task at our own
             // same-origin proxy on success; otherwise keep the remote URL as a best-effort fallback.
             if (task.getStatus() == MeshyTaskStatus.SUCCEEDED
-                && cacheThumbnailBytes(task.getId(), remote.getThumbnailUrl())) {
+                && cacheThumbnailBytes(task.getId(), safeThumbnailUrl)) {
                 task.setThumbnailUrl(selfThumbnailUrl(task.getId()));
             } else {
-                task.setThumbnailUrl(remote.getThumbnailUrl());
+                task.setThumbnailUrl(safeThumbnailUrl);
             }
         }
         if (remote.getConsumedCredits() != null) {
             task.setConsumedCredits(remote.getConsumedCredits());
         }
-        Map<String, String> animations = buildAnimationUrls(remote.getResult());
+        Map<String, String> animations = safeUrlMap(buildAnimationUrls(remote.getResult()));
         if (!animations.isEmpty()) {
             task.setAnimationUrls(animations);
         }
         if (task.getStatus() == MeshyTaskStatus.FAILED && remote.getTaskError() != null) {
             task.setErrorMessage(remote.getTaskError().getMessage());
         }
+    }
+
+    /** Null (and logs) if the URL isn't a safe public http(s) target; otherwise returns it as-is. */
+    private String safeUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        if (!SsrfGuard.isSafe(url)) {
+            log.warn("Rejecting unsafe URL from Meshy webhook payload: {}", url);
+            return null;
+        }
+        return url;
+    }
+
+    /** Filters a URL map down to entries whose value passes {@link #safeUrl}. */
+    private Map<String, String> safeUrlMap(Map<String, String> urls) {
+        if (urls == null || urls.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> filtered = new LinkedHashMap<>();
+        urls.forEach((key, value) -> {
+            String safe = safeUrl(value);
+            if (safe != null) {
+                filtered.put(key, safe);
+            }
+        });
+        return filtered;
+    }
+
+    /** Same idea as {@link #safeUrlMap} but for the texture-set list shape. */
+    private List<MeshyTextureDto> safeTextures(List<MeshyTextureDto> textures) {
+        if (textures == null || textures.isEmpty()) {
+            return List.of();
+        }
+        return textures.stream().map(t -> new MeshyTextureDto(
+            safeUrl(t.getBaseColor()), safeUrl(t.getMetallic()),
+            safeUrl(t.getNormal()), safeUrl(t.getRoughness()), safeUrl(t.getEmission()))).toList();
     }
 
     private Map<String, String> buildAnimationUrls(MeshyResultDto result) {
