@@ -1,6 +1,7 @@
 package com.innerstyle.meshy.client.impl;
 
 import com.innerstyle.common.exception.UpstreamRequestException;
+import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.common.exception.UpstreamServiceException;
 import com.innerstyle.meshy.client.MeshyClient;
 import com.innerstyle.meshy.client.dto.MeshyAnimationRequest;
@@ -42,6 +43,14 @@ public class MeshyRestClient implements MeshyClient {
      */
     private RuntimeException meshyError(String op, RestClientResponseException ex) {
         log.error("Meshy {} failed: {} {}", op, ex.getStatusCode(), ex.getResponseBodyAsString());
+        // 404 with "Task not found" = Meshy purged the task (usually after ~14 days).
+        // Surface as ResourceNotFoundException so the caller can mark the task EXPIRED.
+        if (ex.getStatusCode().value() == 404) {
+            String body = ex.getResponseBodyAsString();
+            if (body != null && body.contains("not found")) {
+                return new ResourceNotFoundException("meshy.task.purgedByMeshy");
+            }
+        }
         if (ex.getStatusCode().is4xxClientError()) {
             return new UpstreamRequestException("meshy.inputRejected");
         }

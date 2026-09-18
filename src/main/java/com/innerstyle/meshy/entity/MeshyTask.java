@@ -20,6 +20,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -100,6 +101,18 @@ public class MeshyTask {
 
     @Column(name = "consumed_credits")
     private Integer consumedCredits;
+
+    /**
+     * When this task's asset URLs expire on Meshy CDN. Null for tasks without time-limited URLs
+     * (e.g. uploaded/local assets). Populated when the task reaches SUCCEEDED.
+     * Meshy retains tasks for approximately 14 days after completion.
+     */
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
+    /** Soft-delete timestamp. Non-null means the user deleted this task. */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)

@@ -20,14 +20,19 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
 
     Page<MeshyTask> findByStatus(MeshyTaskStatus status, Pageable pageable);
 
-    /** A user's own tasks (the private library) — includes legacy rows with no owner (userId IS NULL). */
-    @Query("SELECT t FROM MeshyTask t WHERE t.userId = :userId OR t.userId IS NULL")
+    /** A user's own tasks (the private library) — includes legacy rows with no owner.
+     *  Excludes soft-deleted and EXPIRED tasks. */
+    @Query("SELECT t FROM MeshyTask t WHERE (t.userId = :userId OR t.userId IS NULL) AND t.deletedAt IS NULL AND t.status <> 'EXPIRED'")
     Page<MeshyTask> findByUserIdOrLegacy(@Param("userId") UUID userId, Pageable pageable);
 
-    @Query("SELECT t FROM MeshyTask t WHERE (t.userId = :userId OR t.userId IS NULL) AND t.status = :status")
+    @Query("SELECT t FROM MeshyTask t WHERE (t.userId = :userId OR t.userId IS NULL) AND t.deletedAt IS NULL AND t.status <> 'EXPIRED' AND t.status = :status")
     Page<MeshyTask> findByUserIdOrLegacyAndStatus(@Param("userId") UUID userId,
                                                    @Param("status") MeshyTaskStatus status,
                                                    Pageable pageable);
+
+    /** Tasks expiring within the next N days (for the "expiring soon" banner). */
+    @Query("SELECT t FROM MeshyTask t WHERE (t.userId = :userId OR t.userId IS NULL) AND t.deletedAt IS NULL AND t.status = 'SUCCEEDED' AND t.expiresAt IS NOT NULL AND t.expiresAt < :threshold")
+    List<MeshyTask> findExpiringSoon(@Param("userId") UUID userId, @Param("threshold") java.time.Instant threshold);
 
     /** Non-terminal tasks for the polling fallback to reconcile. */
     @Query("SELECT t FROM MeshyTask t WHERE t.status IN :statuses ORDER BY t.updatedAt ASC")

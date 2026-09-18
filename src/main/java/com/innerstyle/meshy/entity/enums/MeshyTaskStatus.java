@@ -8,9 +8,15 @@ public enum MeshyTaskStatus {
     IN_PROGRESS,
     SUCCEEDED,
     FAILED,
-    CANCELED;
+    CANCELED,
+    /** Meshy deleted this task from their servers (tasks older than ~60 days). */
+    EXPIRED;
 
     public boolean isTerminal() {
-        return this == SUCCEEDED || this == FAILED || this == CANCELED;
+        return this == SUCCEEDED || this == FAILED || this == CANCELED || this == EXPIRED;
+    }
+
+    public boolean isExpired() {
+        return this == EXPIRED;
     }
 }

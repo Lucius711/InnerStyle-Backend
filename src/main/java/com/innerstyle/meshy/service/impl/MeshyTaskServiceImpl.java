@@ -106,29 +106,33 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final ContentModeration contentModeration;
     private final MeshToolRunner meshToolRunner;
 
-    private static final Set<String> ALLOWED_MODEL_EXTS =
-        Set.of("glb", "gltf", "obj", "fbx", "stl");
+    private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
 
-    private static final Set<String> ALLOWED_IMAGE_TYPES =
-        Set.of("image/jpeg", "image/jpg", "image/png", "image/webp");
+    private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of("image/jpeg", "image/jpg", "image/png", "image/webp");
 
-    /** Shared client for streaming model/animation/thumbnail files from the (CORS-less) Meshy CDN. */
+    /**
+     * Shared client for streaming model/animation/thumbnail files from the
+     * (CORS-less) Meshy CDN.
+     */
     private static final HttpClient MODEL_HTTP = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(15))
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .build();
+            .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
-    /** Upper bound for a resize request's target height, in millimetres (sanity guard). */
+    /**
+     * Upper bound for a resize request's target height, in millimetres (sanity
+     * guard).
+     */
     private static final double MAX_EXPORT_HEIGHT_MM = 1000.0;
 
     @Override
     @Transactional
     public MeshyTaskResponse createImageTo3d(ImageTo3dRequest request) {
         return submitImageTo3d(request.getImageUrl(), shorten(request.getImageUrl()),
-            request.getAiModel(), request.getShouldTexture(), request.getEnablePbr(),
-            request.getShouldRemesh(), request.getTargetPolycount(), request.getTopology(),
-            request.getPoseMode(), request.getTexturePrompt(), request.getTextureImageUrl(),
-            request.getTargetFormats(), request.getHdTexture(), request.getImageEnhancement());
+                request.getAiModel(), request.getShouldTexture(), request.getEnablePbr(),
+                request.getShouldRemesh(), request.getTargetPolycount(), request.getTopology(),
+                request.getPoseMode(), request.getTexturePrompt(), request.getTextureImageUrl(),
+                request.getTargetFormats(), request.getHdTexture(), request.getImageEnhancement());
     }
 
     @Override
@@ -136,12 +140,13 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse createImageTo3dFromUpload(MultipartFile file, ImageUploadOptions options) {
         String dataUri = toDataUri(file);
         String sourceLabel = "upload:" + (file.getOriginalFilename() != null
-            ? file.getOriginalFilename() : "image");
+                ? file.getOriginalFilename()
+                : "image");
         return submitImageTo3d(dataUri, sourceLabel,
-            options.getAiModel(), options.getShouldTexture(), options.getEnablePbr(),
-            options.getShouldRemesh(), options.getTargetPolycount(), options.getTopology(),
-            options.getPoseMode(), options.getTexturePrompt(), null,
-            options.getTargetFormats(), options.getHdTexture(), options.getImageEnhancement());
+                options.getAiModel(), options.getShouldTexture(), options.getEnablePbr(),
+                options.getShouldRemesh(), options.getTargetPolycount(), options.getTopology(),
+                options.getPoseMode(), options.getTexturePrompt(), null,
+                options.getTargetFormats(), options.getHdTexture(), options.getImageEnhancement());
     }
 
     @Override
@@ -157,10 +162,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             abortBilling(billing);
             throw ex;
         }
-        // Meshy's figure stages don't accept a texture prompt; we carry the user's desired
-        // texture/color down the chain so it can be applied via /retexture after the build.
+        // Meshy's figure stages don't accept a texture prompt; we carry the user's
+        // desired
+        // texture/color down the chain so it can be applied via /retexture after the
+        // build.
         MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId,
-            blankToNull(request.getTexturePrompt()), null);
+                blankToNull(request.getTexturePrompt()), null);
         task.setSourceImageUrl(shorten(request.getImageUrl()));
         applyBilling(task, billing);
         return persistAndMap(task);
@@ -181,7 +188,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw ex;
         }
         MeshyTask task = newTask(MeshyTaskType.FIGURE_PROTOTYPE, meshyTaskId,
-            blankToNull(texturePrompt), null);
+                blankToNull(texturePrompt), null);
         String label = "upload:" + (file.getOriginalFilename() != null ? file.getOriginalFilename() : "image");
         task.setSourceImageUrl(label);
         applyBilling(task, billing);
@@ -193,8 +200,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public MeshyTaskResponse buildFigurine(FigurineBuildRequest request) {
         ensureConfigured();
         MeshyTask proto = requireSucceeded(request.getSourceTaskId(), MeshyTaskType.FIGURE_PROTOTYPE);
-        // Texture description: explicit value on the build request wins, otherwise inherit the
-        // one captured at stage 1. Stored on the build task for a later /retexture step.
+        // Texture description: explicit value on the build request wins, otherwise
+        // inherit the
+        // one captured at stage 1. Stored on the build task for a later /retexture
+        // step.
         String texturePrompt = blankToNull(request.getTexturePrompt());
         if (texturePrompt == null) {
             texturePrompt = proto.getPrompt();
@@ -221,16 +230,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyMultiImageTo3dRequest(
-                request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
-                request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
-                request.getTopology(), request.getTexturePrompt(), request.getTargetFormats(), request.getHdTexture(), request.getImageEnhancement());
+                    request.getImageUrls(), request.getAiModel(), request.getShouldTexture(),
+                    request.getEnablePbr(), request.getShouldRemesh(), request.getTargetPolycount(),
+                    request.getTopology(), request.getTexturePrompt(), request.getTargetFormats(),
+                    request.getHdTexture(), request.getImageEnhancement());
             meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
             throw ex;
         }
         MeshyTask task = newTask(MeshyTaskType.MULTI_IMAGE_TO_3D, meshyTaskId,
-            request.getTexturePrompt(), null);
+                request.getTexturePrompt(), null);
         int count = request.getImageUrls() != null ? request.getImageUrls().size() : 0;
         task.setSourceImageUrl("multi-image:" + count);
         applyBilling(task, billing);
@@ -240,7 +250,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Override
     @Transactional
     public MeshyTaskResponse createMultiImageTo3dFromUpload(List<MultipartFile> files,
-                                                            ImageUploadOptions options) {
+            ImageUploadOptions options) {
         ensureConfigured();
         if (files == null || files.isEmpty()) {
             throw new BadRequestException("validation.image.required");
@@ -251,35 +261,37 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyMultiImageTo3dRequest(
-                dataUris, options.getAiModel(), options.getShouldTexture(),
-                options.getEnablePbr(), options.getShouldRemesh(), options.getTargetPolycount(),
-                options.getTopology(), options.getTexturePrompt(), options.getTargetFormats(), options.getHdTexture(), options.getImageEnhancement());
+                    dataUris, options.getAiModel(), options.getShouldTexture(),
+                    options.getEnablePbr(), options.getShouldRemesh(), options.getTargetPolycount(),
+                    options.getTopology(), options.getTexturePrompt(), options.getTargetFormats(),
+                    options.getHdTexture(), options.getImageEnhancement());
             meshyTaskId = meshyClient.createMultiImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
             throw ex;
         }
         MeshyTask task = newTask(MeshyTaskType.MULTI_IMAGE_TO_3D, meshyTaskId,
-            options.getTexturePrompt(), null);
+                options.getTexturePrompt(), null);
         task.setSourceImageUrl("multi-upload:" + files.size());
         applyBilling(task, billing);
         return persistAndMap(task);
     }
 
     private MeshyTaskResponse submitImageTo3d(String imageUrl, String sourceLabel, String aiModel,
-                                              Boolean shouldTexture, Boolean enablePbr, Boolean shouldRemesh,
-                                              Integer targetPolycount, String topology, String poseMode,
-                                              String texturePrompt, String textureImageUrl,
-                                              List<String> targetFormats, Boolean hdTexture,
-                                              Boolean imageEnhancement) {
+            Boolean shouldTexture, Boolean enablePbr, Boolean shouldRemesh,
+            Integer targetPolycount, String topology, String poseMode,
+            String texturePrompt, String textureImageUrl,
+            List<String> targetFormats, Boolean hdTexture,
+            Boolean imageEnhancement) {
         ensureConfigured();
         contentModeration.assertClean(texturePrompt);
         BillingContext billing = beginBilling(MeshyTaskType.IMAGE_TO_3D);
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyImageTo3dRequest(
-                imageUrl, aiModel, shouldTexture, enablePbr, shouldRemesh, targetPolycount,
-                topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null, hdTexture, imageEnhancement);
+                    imageUrl, aiModel, shouldTexture, enablePbr, shouldRemesh, targetPolycount,
+                    topology, poseMode, texturePrompt, textureImageUrl, targetFormats, null, hdTexture,
+                    imageEnhancement);
             meshyTaskId = meshyClient.createImageTo3d(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -291,7 +303,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return persistAndMap(task);
     }
 
-    /** Convert an uploaded image into a {@code data:<mime>;base64,<...>} URI accepted by Meshy. */
+    /**
+     * Convert an uploaded image into a {@code data:<mime>;base64,<...>} URI
+     * accepted by Meshy.
+     */
     private String toDataUri(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("validation.image.required");
@@ -318,9 +333,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = MeshyTextTo3dPreviewRequest.preview(
-                request.getPrompt(), request.getAiModel(), request.getShouldRemesh(),
-                request.getTargetPolycount(), request.getTopology(), request.getPoseMode(),
-                request.getTargetFormats(), null);
+                    request.getPrompt(), request.getAiModel(), request.getShouldRemesh(),
+                    request.getTargetPolycount(), request.getTopology(), request.getPoseMode(),
+                    request.getTargetFormats(), null);
             meshyTaskId = meshyClient.createTextTo3dPreview(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -340,8 +355,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = MeshyTextTo3dRefineRequest.refine(
-                preview.getMeshyTaskId(), request.getEnablePbr(), request.getTexturePrompt(),
-                request.getTextureImageUrl(), request.getTargetFormats());
+                    preview.getMeshyTaskId(), request.getEnablePbr(), request.getTexturePrompt(),
+                    request.getTextureImageUrl(), request.getTargetFormats());
             meshyTaskId = meshyClient.createTextTo3dRefine(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -362,8 +377,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyRemeshRequest(
-                source.inputTaskId(), source.modelUrl(), request.getTargetFormats(),
-                request.getTopology(), request.getTargetPolycount());
+                    source.inputTaskId(), source.modelUrl(), request.getTargetFormats(),
+                    request.getTopology(), request.getTargetPolycount());
             meshyTaskId = meshyClient.createRemesh(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -387,16 +402,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyRetextureRequest(
-                source.inputTaskId(), source.modelUrl(), request.getTextStylePrompt(),
-                request.getImageStyleUrl(), request.getAiModel(), request.getEnablePbr(),
-                request.getEnableOriginalUv(), request.getTargetFormats());
+                    source.inputTaskId(), source.modelUrl(), request.getTextStylePrompt(),
+                    request.getImageStyleUrl(), request.getAiModel(), request.getEnablePbr(),
+                    request.getEnableOriginalUv(), request.getTargetFormats());
             meshyTaskId = meshyClient.createRetexture(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
             throw ex;
         }
         MeshyTask task = newTask(MeshyTaskType.RETEXTURE, meshyTaskId, request.getTextStylePrompt(),
-            source.parentId());
+                source.parentId());
         applyBilling(task, billing);
         return persistAndMap(task);
     }
@@ -410,7 +425,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String meshyTaskId;
         try {
             var meshyRequest = new MeshyRiggingRequest(
-                source.inputTaskId(), source.modelUrl(), request.getHeightMeters(), null);
+                    source.inputTaskId(), source.modelUrl(), request.getHeightMeters(), null);
             meshyTaskId = meshyClient.createRigging(meshyRequest);
         } catch (RuntimeException ex) {
             abortBilling(billing);
@@ -432,8 +447,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             MeshyAnimationRequest.PostProcess postProcess = null;
             if (!isBlank(request.getOperationType())) {
                 Integer fps = "change_fps".equals(request.getOperationType()) && request.getFps() != null
-                    ? Integer.valueOf(request.getFps())
-                    : null;
+                        ? Integer.valueOf(request.getFps())
+                        : null;
                 postProcess = new MeshyAnimationRequest.PostProcess(request.getOperationType(), fps);
             }
             var meshyRequest = new MeshyAnimationRequest(rig.getMeshyTaskId(), request.getActionId(), postProcess);
@@ -462,7 +477,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
         MeshyTask task = new MeshyTask();
         task.setTaskType(MeshyTaskType.UPLOADED);
-        task.setMeshyTaskId("upload-" + UUID.randomUUID());   // no Meshy task; synthetic unique id
+        task.setMeshyTaskId("upload-" + UUID.randomUUID()); // no Meshy task; synthetic unique id
         task.setStatus(MeshyTaskStatus.SUCCEEDED);
         task.setProgress(100);
         task.setUserId(userId);
@@ -484,7 +499,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("meshy.task.notSucceeded");
         }
 
-        // Source the current model (a prior in-place edit/upload wins, else Meshy's GLB).
+        // Source the current model (a prior in-place edit/upload wins, else Meshy's
+        // GLB).
         Optional<MeshyTaskAsset> existing = assetRepository.findById(task.getId());
         byte[] model;
         String inExt;
@@ -498,8 +514,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
         MeshToolRunner.SignatureSpec signature = buildSignature(request);
         byte[] withBase = meshToolRunner.addBase(model, inExt, request.shapeOrDefault(),
-            request.heightRatioOrDefault(), request.marginRatioOrDefault(), request.colorOrDefault(),
-            signature, baseColorTextureBytes(task));
+                request.heightRatioOrDefault(), request.marginRatioOrDefault(), request.colorOrDefault(),
+                signature, baseColorTextureBytes(task));
 
         // Persist in place as GLB; the served model now points at our stored asset.
         storeAsset(task.getId(), withBase, "glb");
@@ -508,17 +524,20 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return persistAndMap(task);
     }
 
-    /** Build the engraving spec from a base request: hand-drawn strokes win over typed text. */
+    /**
+     * Build the engraving spec from a base request: hand-drawn strokes win over
+     * typed text.
+     */
     private MeshToolRunner.SignatureSpec buildSignature(BaseRequest request) {
         if (request.hasSignatureStrokes()) {
             return new MeshToolRunner.SignatureSpec("strokes", null, request.getSignatureStrokes(),
-                request.signaturePenWidthOrDefault(), request.signatureDepthRatioOrDefault(),
-                request.signatureRaisedOrDefault());
+                    request.signaturePenWidthOrDefault(), request.signatureDepthRatioOrDefault(),
+                    request.signatureRaisedOrDefault());
         }
         if (!request.signatureTextOrEmpty().isEmpty()) {
             return new MeshToolRunner.SignatureSpec("text", request.signatureTextOrEmpty(), null,
-                request.signaturePenWidthOrDefault(), request.signatureDepthRatioOrDefault(),
-                request.signatureRaisedOrDefault());
+                    request.signaturePenWidthOrDefault(), request.signatureDepthRatioOrDefault(),
+                    request.signatureRaisedOrDefault());
         }
         return null;
     }
@@ -531,15 +550,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
 
-        // Source the current (baked) model; if there's no local asset there's no base to remove.
+        // Source the current (baked) model; if there's no local asset there's no base
+        // to remove.
         Optional<MeshyTaskAsset> existing = assetRepository.findById(task.getId());
         if (existing.isEmpty()) {
             throw new BadRequestException("meshy.base.none");
         }
         byte[] stripped = meshToolRunner.stripBase(existing.get().getData(),
-            existing.get().getFormat(), baseColorTextureBytes(task));
+                existing.get().getFormat(), baseColorTextureBytes(task));
 
-        // Persist the base-less model in place (also drops any cached USDZ so AR rebuilds it).
+        // Persist the base-less model in place (also drops any cached USDZ so AR
+        // rebuilds it).
         storeAsset(task.getId(), stripped, "glb");
         pointModelAtAsset(task);
         invalidateUsdz(task.getId());
@@ -560,8 +581,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("meshy.task.notSucceeded");
         }
 
-        // The browser exported the edited scene (material + transform edits baked in) as a GLB.
-        // Store it in place as the authoritative model, repoint the model URL, and drop the stale
+        // The browser exported the edited scene (material + transform edits baked in)
+        // as a GLB.
+        // Store it in place as the authoritative model, repoint the model URL, and drop
+        // the stale
         // AR (USDZ) cache so it rebuilds from the edited mesh.
         storeAsset(task.getId(), glb, "glb");
         pointModelAtAsset(task);
@@ -569,7 +592,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return persistAndMap(task);
     }
 
-    /** Drop the cached AR (USDZ) for a task after its model changes, so it is rebuilt on demand. */
+    /**
+     * Drop the cached AR (USDZ) for a task after its model changes, so it is
+     * rebuilt on demand.
+     */
     private void invalidateUsdz(UUID taskId) {
         if (usdzRepository.existsById(taskId)) {
             usdzRepository.deleteById(taskId);
@@ -607,7 +633,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
         MeshToolRunner.RepairOutput out = meshToolRunner.repairToGlb(model, inExt);
 
-        // Save the repaired mesh in place; the served model now points at our stored asset.
+        // Save the repaired mesh in place; the served model now points at our stored
+        // asset.
         storeAsset(task.getId(), out.glb(), "glb");
         pointModelAtAsset(task);
         invalidateUsdz(task.getId());
@@ -615,10 +642,13 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return new com.innerstyle.meshy.dto.response.RepairResponse(out.before(), out.after(), updated);
     }
 
-    /** Point the task's served model at our stored GLB asset (same-origin proxy URL). */
+    /**
+     * Point the task's served model at our stored GLB asset (same-origin proxy
+     * URL).
+     */
     private void pointModelAtAsset(MeshyTask task) {
         Map<String, String> urls = new LinkedHashMap<>(
-            task.getModelUrls() != null ? task.getModelUrls() : Map.of());
+                task.getModelUrls() != null ? task.getModelUrls() : Map.of());
         urls.put("glb", selfModelUrl(task.getId()));
         task.setModelUrls(urls);
     }
@@ -627,7 +657,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional(readOnly = true)
     public MeshyTaskResponse getById(UUID id, UUID userId) {
         MeshyTask task = getTaskOrThrow(id);
-        // Legacy tasks (userId == null) have no ownership record — allow any authenticated user to
+        // Legacy tasks (userId == null) have no ownership record — allow any
+        // authenticated user to
         // access them rather than locking them out permanently.
         if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
@@ -638,10 +669,11 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Override
     @Transactional(readOnly = true)
     public Page<MeshyTaskResponse> list(UUID userId, MeshyTaskStatus status, Pageable pageable) {
-        // Include legacy rows (userId IS NULL) so pre-auth tasks aren't invisible to the user.
+        // Include legacy rows (userId IS NULL) so pre-auth tasks aren't invisible to
+        // the user.
         Page<MeshyTask> page = (status == null)
-            ? taskRepository.findByUserIdOrLegacy(userId, pageable)
-            : taskRepository.findByUserIdOrLegacyAndStatus(userId, status, pageable);
+                ? taskRepository.findByUserIdOrLegacy(userId, pageable)
+                : taskRepository.findByUserIdOrLegacyAndStatus(userId, status, pageable);
         return page.map(taskMapper::toResponse);
     }
 
@@ -652,7 +684,11 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
-        taskRepository.delete(task);
+        // Soft delete: mark deletedAt instead of physically removing the row.
+        // Use deleteTask(id, userId, hardDelete=true) or a DB query for permanent
+        // removal.
+        task.setDeletedAt(java.time.Instant.now());
+        taskRepository.save(task);
     }
 
     @Override
@@ -661,14 +697,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         MeshyTask task = getTaskOrThrow(id);
         String fmt = normalizeFormat(format);
 
-        // iOS AR Quick Look (usdz) needs a real .usdz file — never the stored GLB. Prefer the
-        // cached browser-built USDZ, then a Meshy-hosted one; otherwise 404 so the frontend builds
+        // iOS AR Quick Look (usdz) needs a real .usdz file — never the stored GLB.
+        // Prefer the
+        // cached browser-built USDZ, then a Meshy-hosted one; otherwise 404 so the
+        // frontend builds
         // and uploads it (see storeUsdz).
         if ("usdz".equals(fmt)) {
             return fetchUsdz(task);
         }
 
-        // A locally-stored model (uploaded file or in-place edit such as an added base) is the
+        // A locally-stored model (uploaded file or in-place edit such as an added base)
+        // is the
         // authoritative current model — serve it directly.
         Optional<MeshyTaskAsset> asset = assetRepository.findById(id);
         if (asset.isPresent()) {
@@ -678,12 +717,15 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return downloadModel(task, fmt);
     }
 
-    /** Resolve a task's USDZ: cached (browser-built) first, then a Meshy-hosted one, else 404. */
+    /**
+     * Resolve a task's USDZ: cached (browser-built) first, then a Meshy-hosted one,
+     * else 404.
+     */
     private MeshyTaskService.ModelData fetchUsdz(MeshyTask task) {
         Optional<MeshyTaskUsdz> cached = usdzRepository.findById(task.getId());
         if (cached.isPresent()) {
             return new MeshyTaskService.ModelData(
-                cached.get().getData(), "model/vnd.usdz+zip", "model.usdz");
+                    cached.get().getData(), "model/vnd.usdz+zip", "model.usdz");
         }
         Map<String, String> models = task.getModelUrls();
         if (models != null && models.get("usdz") != null) {
@@ -699,7 +741,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("meshy.usdz.empty");
         }
         MeshyTask task = getTaskOrThrow(id);
-        // Ownership guard (finding M1): only the task owner may cache its AR asset. 404 (not 403)
+        // Ownership guard (finding M1): only the task owner may cache its AR asset. 404
+        // (not 403)
         // on mismatch so a valid task id is not confirmed to a non-owner.
         if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
@@ -722,7 +765,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         MeshyTaskThumbnail thumb = thumbnailRepository.findById(task.getId())
-            .orElseGet(MeshyTaskThumbnail::new);
+                .orElseGet(MeshyTaskThumbnail::new);
         thumb.setTaskId(task.getId());
         thumb.setData(data);
         thumb.setSize(data.length);
@@ -736,8 +779,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public byte[] fetchThumbnailImage(UUID id) {
         byte[] cached = thumbnailRepository.findById(id)
-            .map(MeshyTaskThumbnail::getData)
-            .orElse(null);
+                .map(MeshyTaskThumbnail::getData)
+                .orElse(null);
         if (cached != null && cached.length > 0) {
             return cached;
         }
@@ -745,8 +788,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (task == null) {
             return null;
         }
-        // Try the stored preview URL first (still valid for recent tasks); if it's gone/expired,
-        // re-fetch a fresh signed URL from Meshy. Cache the bytes so we never hit the CDN again.
+        // Try the stored preview URL first (still valid for recent tasks); if it's
+        // gone/expired,
+        // re-fetch a fresh signed URL from Meshy. Cache the bytes so we never hit the
+        // CDN again.
         byte[] bytes = fetchImageBytes(externalHttpUrl(task.getThumbnailUrl()));
         boolean refetchedFromMeshy = false;
         if ((bytes == null || bytes.length == 0) && task.getMeshyTaskId() != null
@@ -757,6 +802,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                     bytes = fetchImageBytes(externalHttpUrl(remote.getThumbnailUrl()));
                     refetchedFromMeshy = bytes != null && bytes.length > 0;
                 }
+            } catch (ResourceNotFoundException e) {
+                // Meshy returned 404 "Task not found" — task was purged. Mark as EXPIRED.
+                log.warn("Task {} purged by Meshy (404); marking EXPIRED", task.getMeshyTaskId());
+                task.setStatus(MeshyTaskStatus.EXPIRED);
+                task.setErrorMessage("meshy.task.purgedByMeshy");
+                taskRepository.save(task);
             } catch (RuntimeException e) {
                 log.warn("Thumbnail re-fetch from Meshy failed for task {}: {}", id, e.getMessage());
             }
@@ -769,8 +820,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         thumb.setData(bytes);
         thumb.setSize(bytes.length);
         thumbnailRepository.save(thumb);
-        // If we re-fetched from Meshy and the task's stored URL is still an expiring CDN link,
-        // point it at our own proxy now so subsequent webhooks/polls don't overwrite it.
+        // If we re-fetched from Meshy and the task's stored URL is still an expiring
+        // CDN link,
+        // point it at our own proxy now so subsequent webhooks/polls don't overwrite
+        // it.
         if (refetchedFromMeshy) {
             String self = selfThumbnailUrl(id);
             if (!self.equals(task.getThumbnailUrl())) {
@@ -782,7 +835,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * Download and store the preview image for a task (idempotent — skips if already cached).
+     * Download and store the preview image for a task (idempotent — skips if
+     * already cached).
      * Returns true when a thumbnail is available locally afterwards.
      */
     private boolean cacheThumbnailBytes(UUID taskId, String url) {
@@ -804,7 +858,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return true;
     }
 
-    /** Return the URL only if it's an absolute http(s) URL (a remote CDN), else null. */
+    /**
+     * Return the URL only if it's an absolute http(s) URL (a remote CDN), else
+     * null.
+     */
     private String externalHttpUrl(String url) {
         if (url == null) {
             return null;
@@ -813,15 +870,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return (u.startsWith("http://") || u.startsWith("https://")) ? u : null;
     }
 
-    /** Download image bytes from a URL; returns null on any failure or non-2xx response. */
+    /**
+     * Download image bytes from a URL; returns null on any failure or non-2xx
+     * response.
+     */
     private byte[] fetchImageBytes(String url) {
         if (url == null) {
             return null;
         }
         try {
             HttpResponse<byte[]> resp = MODEL_HTTP.send(
-                HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(20)).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+                    HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(20)).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
             if (resp.statusCode() / 100 != 2) {
                 return null;
             }
@@ -856,26 +916,30 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
 
-        // Cache lookup. Meshy CDN URLs are presigned and expire, so we key the cache on the URL
-        // path (without the signing query) — a stable fingerprint of the underlying image. A cache
-        // hit with a matching source key serves the stored bytes and skips the (expiry-prone) CDN.
+        // Cache lookup. Meshy CDN URLs are presigned and expire, so we key the cache on
+        // the URL
+        // path (without the signing query) — a stable fingerprint of the underlying
+        // image. A cache
+        // hit with a matching source key serves the stored bytes and skips the
+        // (expiry-prone) CDN.
         String sourceKey = stripQuery(url);
         MeshyTaskTexture cached = textureRepository
-            .findById(new MeshyTaskTextureId(id, key))
-            .orElse(null);
+                .findById(new MeshyTaskTextureId(id, key))
+                .orElse(null);
         if (cached != null && cached.getSourceKey().equals(sourceKey)) {
             return new MeshyTaskService.ModelData(
-                cached.getData(), cached.getContentType(), "texture." + cached.getExt());
+                    cached.getData(), cached.getContentType(), "texture." + cached.getExt());
         }
 
         byte[] bytes = tryFetchBytes(url);
         if (bytes == null) {
-            // CDN fetch failed (commonly an expired signature). Serve any stale cache we have
+            // CDN fetch failed (commonly an expired signature). Serve any stale cache we
+            // have
             // rather than letting the viewer fall back to a grey, un-textured model.
             if (cached != null) {
                 log.warn("Texture fetch failed for task {} map {}; serving stale cache", id, key);
                 return new MeshyTaskService.ModelData(
-                    cached.getData(), cached.getContentType(), "texture." + cached.getExt());
+                        cached.getData(), cached.getContentType(), "texture." + cached.getExt());
             }
             throw new UpstreamServiceException("meshy.upstreamError");
         }
@@ -890,8 +954,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private void storeTexture(UUID taskId, String mapName, String sourceKey, byte[] bytes,
             String contentType, String ext) {
         MeshyTaskTexture texture = textureRepository
-            .findById(new MeshyTaskTextureId(taskId, mapName))
-            .orElseGet(MeshyTaskTexture::new);
+                .findById(new MeshyTaskTextureId(taskId, mapName))
+                .orElseGet(MeshyTaskTexture::new);
         texture.setTaskId(taskId);
         texture.setMapName(mapName);
         texture.setSourceKey(sourceKey);
@@ -930,7 +994,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                 }
                 requirePremiumMembership(userId);
                 data = MeshTransformer.resize(data, a.getFormat(), heightMm,
-                    origin == null ? ModelOrigin.BOTTOM : origin);
+                        origin == null ? ModelOrigin.BOTTOM : origin);
             }
             return new ExportPrep(task, a.getFormat(), data);
         }
@@ -946,7 +1010,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             requirePremiumMembership(userId);
             MeshyTaskService.ModelData model = downloadModel(task, fmt);
             resized = MeshTransformer.resize(model.bytes(), fmt, heightMm,
-                origin == null ? ModelOrigin.BOTTOM : origin);
+                    origin == null ? ModelOrigin.BOTTOM : origin);
         }
         return new ExportPrep(task, fmt, resized);
     }
@@ -980,8 +1044,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         List<MeshyTextureDto> textures = task.getTextureUrls();
         MeshyTextureDto tex0 = (textures != null && !textures.isEmpty()) ? textures.get(0) : null;
         boolean multi = textures != null && textures.size() > 1;
-        // .obj is geometry only — without an .mtl the colour won't apply, so we generate one and
-        // bind it into the .obj. Other formats (glb embeds textures) are streamed as-is.
+        // .obj is geometry only — without an .mtl the colour won't apply, so we
+        // generate one and
+        // bind it into the .obj. Other formats (glb embeds textures) are streamed
+        // as-is.
         boolean objWithColor = "obj".equals(ext) && tex0 != null;
         String texDir = multi ? "textures/set1/" : "textures/";
         String matName = "innerstyle";
@@ -989,7 +1055,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         zip.putNextEntry(new ZipEntry("model." + ext));
         if (objWithColor) {
             byte[] objBytes = prep.resizedModel() != null
-                ? prep.resizedModel() : fetchBytesOrThrow(modelUrl);
+                    ? prep.resizedModel()
+                    : fetchBytesOrThrow(modelUrl);
             zip.write(bindMtlToObj(objBytes, "model.mtl", matName));
         } else if (prep.resizedModel() != null) {
             zip.write(prep.resizedModel());
@@ -1017,7 +1084,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         zip.finish();
     }
 
-    /** Drop any stale mtllib/usemtl and bind a single generated material to the whole OBJ. */
+    /**
+     * Drop any stale mtllib/usemtl and bind a single generated material to the
+     * whole OBJ.
+     */
     private static byte[] bindMtlToObj(byte[] objBytes, String mtlFile, String matName) {
         String obj = new String(objBytes, StandardCharsets.UTF_8);
         obj = obj.replaceAll("(?m)^\\s*mtllib.*\\R?", "");
@@ -1025,8 +1095,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         Matcher m = Pattern.compile("(?m)^f\\s").matcher(obj);
         String usemtl = "usemtl " + matName + "\n";
         String body = m.find()
-            ? obj.substring(0, m.start()) + usemtl + obj.substring(m.start())
-            : usemtl + obj;
+                ? obj.substring(0, m.start()) + usemtl + obj.substring(m.start())
+                : usemtl + obj;
         return ("mtllib " + mtlFile + "\n" + body).getBytes(StandardCharsets.UTF_8);
     }
 
@@ -1064,15 +1134,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return bytes;
     }
 
-    /** Stream a remote file straight into the open zip entry (no full in-memory copy). */
+    /**
+     * Stream a remote file straight into the open zip entry (no full in-memory
+     * copy).
+     */
     private void streamRemoteInto(String url, OutputStream target) throws IOException {
         try {
             HttpResponse<InputStream> resp = MODEL_HTTP.send(
-                HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(120))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofInputStream());
+                    HttpRequest.newBuilder(URI.create(url))
+                            .timeout(Duration.ofSeconds(120))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
             if (resp.statusCode() / 100 != 2) {
                 log.warn("Model fetch for zip failed ({}) for {}", resp.statusCode(), url);
                 throw new UpstreamServiceException("meshy.upstreamError");
@@ -1086,7 +1159,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
     }
 
-    /** Add one texture map to the zip. Textures are small, so we buffer and skip on failure. */
+    /**
+     * Add one texture map to the zip. Textures are small, so we buffer and skip on
+     * failure.
+     */
     private void addTexture(ZipOutputStream zip, String baseName, String url) throws IOException {
         if (url == null || url.isBlank()) {
             return;
@@ -1101,9 +1177,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * Fetch a task's base-color texture map bytes (Meshy's "color" output), or null when the task
-     * has no texture or the download fails. Passed to the mesh toolchain so base add/strip ops
-     * re-embed the map that Meshy only references externally (otherwise the figure exports grey).
+     * Fetch a task's base-color texture map bytes (Meshy's "color" output), or null
+     * when the task
+     * has no texture or the download fails. Passed to the mesh toolchain so base
+     * add/strip ops
+     * re-embed the map that Meshy only references externally (otherwise the figure
+     * exports grey).
      */
     private byte[] baseColorTextureBytes(MeshyTask task) {
         List<MeshyTextureDto> textures = task.getTextureUrls();
@@ -1120,8 +1199,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private byte[] tryFetchBytes(String url) {
         try {
             HttpResponse<byte[]> resp = MODEL_HTTP.send(
-                HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+                    HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
             return resp.statusCode() / 100 == 2 ? resp.body() : null;
         } catch (IOException e) {
             log.warn("Skipping texture {} in zip: {}", url, e.getMessage());
@@ -1144,7 +1223,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return (format == null || format.isBlank()) ? null : format.toLowerCase();
     }
 
-    /** Resolve a task's asset URL and stream its bytes (server-side proxy, avoids CDN CORS). */
+    /**
+     * Resolve a task's asset URL and stream its bytes (server-side proxy, avoids
+     * CDN CORS).
+     */
     private MeshyTaskService.ModelData downloadModel(MeshyTask task, String fmt) {
         String url = resolveAssetUrl(task, fmt);
         if (url == null) {
@@ -1152,19 +1234,27 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
         try {
             HttpResponse<byte[]> resp = MODEL_HTTP.send(
-                HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(60))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+                    HttpRequest.newBuilder(URI.create(url))
+                            .timeout(Duration.ofSeconds(60))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
             if (resp.statusCode() / 100 != 2) {
                 log.warn("Model fetch failed ({}) for task {}", resp.statusCode(), task.getId());
+                // 403/404 on Meshy CDN = signed URL expired or task purged by Meshy.
+                // Mark as EXPIRED so the user library stops showing this task.
+                if (resp.statusCode() == 403 || resp.statusCode() == 404) {
+                    task.setStatus(MeshyTaskStatus.EXPIRED);
+                    task.setErrorMessage("meshy.task.expired");
+                    taskRepository.save(task);
+                    throw new ResourceNotFoundException("meshy.task.expired");
+                }
                 throw new UpstreamServiceException("meshy.upstreamError");
             }
             String contentType = resp.headers().firstValue("content-type")
-                .orElseGet(() -> contentTypeFor(fmt));
+                    .orElseGet(() -> contentTypeFor(fmt));
             return new MeshyTaskService.ModelData(resp.body(), contentType,
-                "model." + (fmt != null ? fmt : "glb"));
+                    "model." + (fmt != null ? fmt : "glb"));
         } catch (IOException e) {
             log.warn("Model fetch error for task {}: {}", task.getId(), e.getMessage());
             throw new UpstreamServiceException("meshy.upstreamError");
@@ -1178,15 +1268,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private void requirePremiumMembership(UUID userId) {
         UserMembership m = creditService.getOrCreateMembership(userId);
         boolean premium = m.getStatus() == MembershipStatus.ACTIVE
-            && m.getPlan() != null && !m.getPlan().isFree();
+                && m.getPlan() != null && !m.getPlan().isFree();
         if (!premium) {
             throw new ForbiddenException("meshy.export.premiumOnly");
         }
     }
 
     /**
-     * Pick the best asset URL. Prefers an explicitly requested format, then a web-friendly
-     * .glb/.gltf among ALL outputs (so the in-browser viewer can play animations from
+     * Pick the best asset URL. Prefers an explicitly requested format, then a
+     * web-friendly
+     * .glb/.gltf among ALL outputs (so the in-browser viewer can play animations
+     * from
      * animate-task results), then any model, then any animation.
      */
     private String resolveAssetUrl(MeshyTask task, String fmt) {
@@ -1220,7 +1312,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return null;
     }
 
-    /** First URL whose path (ignoring query string) ends with the given extension. */
+    /**
+     * First URL whose path (ignoring query string) ends with the given extension.
+     */
     private String firstUrlEndingWith(Map<String, String> urls, String ext) {
         if (urls == null) {
             return null;
@@ -1266,15 +1360,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         mergeInto(task, remote);
         taskRepository.save(task);
         log.info("Synced Meshy task {} -> {} ({}%)", task.getMeshyTaskId(), task.getStatus(),
-            task.getProgress());
+                task.getProgress());
         settleCreditsOnTerminal(task, previous);
         autoStripFigureBase(task, previous);
     }
 
     /**
-     * Meshy's Figure builder always stands the figure on a pedestal. When a figure build first
-     * reaches SUCCEEDED, strip that baked-in base so the stored model ships base-less — users add
-     * their own base later in the editor. Best-effort: any failure (or no detectable base) leaves
+     * Meshy's Figure builder always stands the figure on a pedestal. When a figure
+     * build first
+     * reaches SUCCEEDED, strip that baked-in base so the stored model ships
+     * base-less — users add
+     * their own base later in the editor. Best-effort: any failure (or no
+     * detectable base) leaves
      * Meshy's original model untouched, so a figure is never broken by this step.
      */
     private void autoStripFigureBase(MeshyTask task, MeshyTaskStatus previous) {
@@ -1301,9 +1398,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * When a job first reaches a terminal state, settle credits. Credits are consumed up-front,
-     * so a SUCCEEDED job needs nothing; a FAILED/CANCELED job is refunded. The {@code previous}
-     * non-terminal check makes this idempotent against duplicate webhook/poll deliveries.
+     * When a job first reaches a terminal state, settle credits. Credits are
+     * consumed up-front,
+     * so a SUCCEEDED job needs nothing; a FAILED/CANCELED job is refunded. The
+     * {@code previous}
+     * non-terminal check makes this idempotent against duplicate webhook/poll
+     * deliveries.
      */
     private void settleCreditsOnTerminal(MeshyTask task, MeshyTaskStatus previous) {
         if (task.getUserId() == null || isTerminal(previous)) {
@@ -1319,8 +1419,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     private boolean isTerminal(MeshyTaskStatus status) {
         return status == MeshyTaskStatus.SUCCEEDED
-            || status == MeshyTaskStatus.FAILED
-            || status == MeshyTaskStatus.CANCELED;
+                || status == MeshyTaskStatus.FAILED
+                || status == MeshyTaskStatus.CANCELED;
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1331,7 +1431,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
     }
 
-    // -------------------------------------------------- billing (authorization hold)
+    // -------------------------------------------------- billing (authorization
+    // hold)
 
     /** Owner + credits consumed for a job (0 when the operation is free). */
     private record BillingContext(UUID userId, int credits) {
@@ -1346,8 +1447,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * Consume membership credits for the job BEFORE calling MeshyAI. If the operation costs no
-     * credits it is free. Throws {@code credit.insufficient} if the user is out of credits. The
+     * Consume membership credits for the job BEFORE calling MeshyAI. If the
+     * operation costs no
+     * credits it is free. Throws {@code credit.insufficient} if the user is out of
+     * credits. The
      * caller must {@link #abortBilling} on a submit failure to refund.
      */
     private BillingContext beginBilling(MeshyTaskType type) {
@@ -1365,7 +1468,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                 creditService.refund(ctx.userId(), ctx.credits(), "MESHY_TASK", null);
             } catch (RuntimeException ex) {
                 log.warn("Failed to refund {} credits after submit error: {}",
-                    ctx.credits(), ex.getMessage());
+                        ctx.credits(), ex.getMessage());
             }
         }
     }
@@ -1391,14 +1494,18 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     private MeshyTask getTaskOrThrow(UUID id) {
         return taskRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
+                .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
     }
 
     /**
-     * Resolve a SUCCEEDED prior task of a specific type and return its entity. Only the owning
-     * user may use their own task as a pipeline source (finding CAO-2: this used to skip the
-     * ownership check that every other task-accessing method enforces, letting any authenticated
-     * user chain remesh/retexture/rig/refine/animate/figurine-build off someone else's task).
+     * Resolve a SUCCEEDED prior task of a specific type and return its entity. Only
+     * the owning
+     * user may use their own task as a pipeline source (finding CAO-2: this used to
+     * skip the
+     * ownership check that every other task-accessing method enforces, letting any
+     * authenticated
+     * user chain remesh/retexture/rig/refine/animate/figurine-build off someone
+     * else's task).
      */
     private MeshyTask requireSucceeded(UUID id, MeshyTaskType expectedType) {
         MeshyTask task = getTaskOrThrow(id);
@@ -1416,14 +1523,21 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * Resolve a source: either our prior task id (-> Meshy input_task_id + parent link) or a model URL.
+     * Resolve a source: either our prior task id (-> Meshy input_task_id + parent
+     * link) or a model URL.
      * Exactly one must be provided.
      *
-     * <p>Native pipeline tasks (image/multi-image/text-to-3D, remesh, retexture) are valid Meshy
-     * {@code input_task_id} values and continue by id. Creative Lab outputs (e.g. the chibi
-     * figurine build) are NOT accepted as {@code input_task_id} by remesh/retexture/rigging, so we
-     * continue the pipeline from their generated model URL instead — same downstream flow as
-     * image-to-3D, just sourced by URL. The parent link is preserved either way for lineage.
+     * <p>
+     * Native pipeline tasks (image/multi-image/text-to-3D, remesh, retexture) are
+     * valid Meshy
+     * {@code input_task_id} values and continue by id. Creative Lab outputs (e.g.
+     * the chibi
+     * figurine build) are NOT accepted as {@code input_task_id} by
+     * remesh/retexture/rigging, so we
+     * continue the pipeline from their generated model URL instead — same
+     * downstream flow as
+     * image-to-3D, just sourced by URL. The parent link is preserved either way for
+     * lineage.
      */
     private SourceRef resolveSource(UUID sourceTaskId, String modelUrl, MeshyTaskType expectedType) {
         boolean hasTask = sourceTaskId != null;
@@ -1433,7 +1547,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
         if (hasTask) {
             MeshyTask source = requireSucceeded(sourceTaskId, expectedType);
-            // Locally-stored model (uploaded file or in-place edit): send it to Meshy as a data URI.
+            // Locally-stored model (uploaded file or in-place edit): send it to Meshy as a
+            // data URI.
             Optional<MeshyTaskAsset> asset = assetRepository.findById(source.getId());
             if (asset.isPresent()) {
                 return new SourceRef(null, toModelDataUri(asset.get().getData()), source.getId());
@@ -1451,19 +1566,25 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         return new SourceRef(null, modelUrl, null);
     }
 
-    /** Task types Meshy accepts directly as an {@code input_task_id} for remesh/retexture/rigging. */
+    /**
+     * Task types Meshy accepts directly as an {@code input_task_id} for
+     * remesh/retexture/rigging.
+     */
     private boolean acceptedAsInputTask(MeshyTaskType type) {
         return switch (type) {
             case IMAGE_TO_3D, MULTI_IMAGE_TO_3D, TEXT_TO_3D_PREVIEW, TEXT_TO_3D_REFINE,
-                 REMESH, RETEXTURE -> true;
+                    REMESH, RETEXTURE ->
+                true;
             // FIGURE_PROTOTYPE, FIGURE_BUILD, RIG, ANIMATE -> continue via model URL.
             default -> false;
         };
     }
 
     private void mergeInto(MeshyTask task, MeshyTaskDto remote) {
-        // Once the model has been edited in place (uploaded/base added/auto-stripped), a stored asset
-        // is the authoritative model and its thumbnail may be a captured one. A late or duplicate
+        // Once the model has been edited in place (uploaded/base added/auto-stripped),
+        // a stored asset
+        // is the authoritative model and its thumbnail may be a captured one. A late or
+        // duplicate
         // Meshy webhook must NOT revert those back to the original Meshy URLs.
         boolean locallyEdited = assetRepository.existsById(task.getId());
         if (remote.getStatus() != null) {
@@ -1472,9 +1593,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (remote.getProgress() != null) {
             task.setProgress(remote.getProgress());
         }
-        // Webhook payload URLs are attacker-influenced input (finding TRUNG: the webhook is only
-        // protected by a shared secret, and callers of this class later fetch these URLs
-        // server-side, e.g. downloadModel/fetchTexture/fetchThumbnailImage). Drop anything that
+        // Webhook payload URLs are attacker-influenced input (finding TRUNG: the
+        // webhook is only
+        // protected by a shared secret, and callers of this class later fetch these
+        // URLs
+        // server-side, e.g. downloadModel/fetchTexture/fetchThumbnailImage). Drop
+        // anything that
         // isn't a safe public http(s) URL rather than trusting it blindly.
         Map<String, String> safeModelUrls = safeUrlMap(remote.getModelUrls());
         if (!locallyEdited && !safeModelUrls.isEmpty()) {
@@ -1486,11 +1610,14 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
         String safeThumbnailUrl = safeUrl(remote.getThumbnailUrl());
         if (!locallyEdited && safeThumbnailUrl != null) {
-            // Cache the preview bytes now, while the signed Meshy URL is still valid, so the
-            // thumbnail never breaks later when that CDN link expires. Point the task at our own
-            // same-origin proxy on success; otherwise keep the remote URL as a best-effort fallback.
+            // Cache the preview bytes now, while the signed Meshy URL is still valid, so
+            // the
+            // thumbnail never breaks later when that CDN link expires. Point the task at
+            // our own
+            // same-origin proxy on success; otherwise keep the remote URL as a best-effort
+            // fallback.
             if (task.getStatus() == MeshyTaskStatus.SUCCEEDED
-                && cacheThumbnailBytes(task.getId(), safeThumbnailUrl)) {
+                    && cacheThumbnailBytes(task.getId(), safeThumbnailUrl)) {
                 task.setThumbnailUrl(selfThumbnailUrl(task.getId()));
             } else {
                 task.setThumbnailUrl(safeThumbnailUrl);
@@ -1506,9 +1633,19 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (task.getStatus() == MeshyTaskStatus.FAILED && remote.getTaskError() != null) {
             task.setErrorMessage(remote.getTaskError().getMessage());
         }
+        // Track when Meshy CDN URLs will expire. Meshy retains task assets for ~14 days
+        // after
+        // completion. We set this only once (when first reaching SUCCEEDED) to avoid
+        // drift.
+        if (task.getStatus() == MeshyTaskStatus.SUCCEEDED && task.getExpiresAt() == null) {
+            task.setExpiresAt(Instant.now().plus(Duration.ofDays(60)));
+        }
     }
 
-    /** Null (and logs) if the URL isn't a safe public http(s) target; otherwise returns it as-is. */
+    /**
+     * Null (and logs) if the URL isn't a safe public http(s) target; otherwise
+     * returns it as-is.
+     */
     private String safeUrl(String url) {
         if (url == null) {
             return null;
@@ -1541,8 +1678,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return List.of();
         }
         return textures.stream().map(t -> new MeshyTextureDto(
-            safeUrl(t.getBaseColor()), safeUrl(t.getMetallic()),
-            safeUrl(t.getNormal()), safeUrl(t.getRoughness()), safeUrl(t.getEmission()))).toList();
+                safeUrl(t.getBaseColor()), safeUrl(t.getMetallic()),
+                safeUrl(t.getNormal()), safeUrl(t.getRoughness()), safeUrl(t.getEmission()))).toList();
     }
 
     private Map<String, String> buildAnimationUrls(MeshyResultDto result) {
@@ -1601,7 +1738,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         assetRepository.save(asset);
     }
 
-    /** Relative same-origin proxy URL for a task's model (served by GET /tasks/{id}/model). */
+    /**
+     * Relative same-origin proxy URL for a task's model (served by GET
+     * /tasks/{id}/model).
+     */
     private String selfModelUrl(UUID id) {
         return "/api/common/3d/tasks/" + id + "/model";
     }
@@ -1652,5 +1792,6 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /** Resolved source input for derived tasks. */
-    private record SourceRef(String inputTaskId, String modelUrl, UUID parentId) {}
+    private record SourceRef(String inputTaskId, String modelUrl, UUID parentId) {
+    }
 }

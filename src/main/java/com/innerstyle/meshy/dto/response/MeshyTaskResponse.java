@@ -59,6 +59,9 @@ public class MeshyTaskResponse {
 
     private Integer consumedCredits;
 
+    @Schema(description = "When Meshy CDN signed URLs expire. Null for local/uploaded assets.")
+    private Instant expiresAt;
+
     private Instant createdAt;
 
     private Instant updatedAt;
