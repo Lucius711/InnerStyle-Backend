@@ -38,7 +38,10 @@ import java.util.List;
 public class MeshyWebhookController {
 
     private static final String SECRET_HEADER = "X-Webhook-Secret";
-    /** Publicly-known placeholder shipped in .env.example; must never be used as a real secret. */
+    /**
+     * Publicly-known placeholder shipped in .env.example; must never be used as a
+     * real secret.
+     */
     private static final String DEFAULT_SECRET = "change_me_random_secret";
     private static final List<String> DEV_PROFILES = List.of("dev", "test", "local");
 
@@ -47,7 +50,7 @@ public class MeshyWebhookController {
     private final Environment environment;
 
     public MeshyWebhookController(MeshyTaskService meshyTaskService, MeshyProperties properties,
-                                   Environment environment) {
+            Environment environment) {
         this.meshyTaskService = meshyTaskService;
         this.properties = properties;
         this.environment = environment;
@@ -58,16 +61,21 @@ public class MeshyWebhookController {
     public ApiResponse<Void> handle(
             @RequestHeader(value = SECRET_HEADER, required = false) String secret,
             @RequestBody MeshyTaskDto payload) {
+        log.info("Meshy webhook received, X-Webhook-Secret present={}", secret != null);
         verifySecret(secret);
         meshyTaskService.applyRemoteState(payload);
         return ApiResponse.success("meshy.webhook.received");
     }
 
     /**
-     * Fail closed outside dev/test/local (finding TRUNG): an unset or still-default secret used
-     * to be accepted unconditionally, letting anyone forge task-completion callbacks. The
-     * scheduled poller (see class javadoc) is an existing fallback completion path, so rejecting
-     * unverifiable webhook calls here is safe — no state update is lost, only delayed.
+     * Fail closed outside dev/test/local (finding TRUNG): an unset or still-default
+     * secret used
+     * to be accepted unconditionally, letting anyone forge task-completion
+     * callbacks. The
+     * scheduled poller (see class javadoc) is an existing fallback completion path,
+     * so rejecting
+     * unverifiable webhook calls here is safe — no state update is lost, only
+     * delayed.
      */
     private void verifySecret(String provided) {
         String expected = properties.webhookSecret();
@@ -75,7 +83,7 @@ public class MeshyWebhookController {
         if (unconfigured) {
             if (devProfileActive()) {
                 log.warn("Meshy webhook secret is not configured; accepting callback without "
-                    + "verification. INSECURE outside dev/test.");
+                        + "verification. INSECURE outside dev/test.");
                 return;
             }
             throw new UnauthorizedException("meshy.webhook.unauthorized");
@@ -87,13 +95,13 @@ public class MeshyWebhookController {
 
     private boolean devProfileActive() {
         return environment.getActiveProfiles().length == 0
-            || Arrays.stream(environment.getActiveProfiles())
-                .anyMatch(p -> DEV_PROFILES.contains(p.toLowerCase()));
+                || Arrays.stream(environment.getActiveProfiles())
+                        .anyMatch(p -> DEV_PROFILES.contains(p.toLowerCase()));
     }
 
     private boolean constantTimeEquals(String expected, String provided) {
         return MessageDigest.isEqual(
-            expected.getBytes(StandardCharsets.UTF_8),
-            provided.getBytes(StandardCharsets.UTF_8));
+                expected.getBytes(StandardCharsets.UTF_8),
+                provided.getBytes(StandardCharsets.UTF_8));
     }
 }
