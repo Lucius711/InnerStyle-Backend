@@ -85,6 +85,15 @@ public class MeshyController {
                 meshyTaskService.repairInPlace(id, principal.getId()));
     }
 
+    @PostMapping("/tasks/{id}/revert")
+    @Operation(summary = "Revert the model back to its pre-repair backup, if one exists. "
+            + "Owner-only. Returns the before/after printability reports + updated task.")
+    public ApiResponse<RepairResponse> revert(@PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.success("meshy.task.updated",
+                meshyTaskService.revertToOriginal(id, principal.getId()));
+    }
+
     @PostMapping("/image-to-3d")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Convert a 2D image into a 3D model (geometry + color, optional optimization & pose)")

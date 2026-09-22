@@ -98,6 +98,13 @@ public class StaffOrderController {
         return ApiResponse.success("staff.order.repaired", staffOrderService.repairModel(id));
     }
 
+    @Operation(summary = "Revert the order's model back to its pre-repair backup, if one exists. "
+            + "Returns before/after stats.")
+    @PostMapping("/{id}/revert")
+    public ApiResponse<RepairResponse> revert(@PathVariable UUID id) {
+        return ApiResponse.success("staff.order.repaired", staffOrderService.revertModel(id));
+    }
+
     @Operation(summary = "Download the customer's 3D model for this order as a ZIP (model + textures)")
     @GetMapping("/{id}/model")
     public ResponseEntity<StreamingResponseBody> downloadModel(

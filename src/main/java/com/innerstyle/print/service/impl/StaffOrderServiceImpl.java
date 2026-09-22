@@ -105,6 +105,12 @@ public class StaffOrderServiceImpl implements StaffOrderService {
         return meshyTaskService.repairInPlace(sourceTaskIdOrThrow(orderId));
     }
 
+    @Override
+    @Transactional
+    public RepairResponse revertModel(UUID orderId) {
+        return meshyTaskService.revertToOriginal(sourceTaskIdOrThrow(orderId));
+    }
+
     /** The order's source model task id, or a 400 if the order has no model attached. */
     private UUID sourceTaskIdOrThrow(UUID orderId) {
         PrintOrder order = getOrderOrThrow(orderId);

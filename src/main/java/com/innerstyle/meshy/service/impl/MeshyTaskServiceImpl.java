@@ -631,6 +631,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             inExt = "glb";
         }
 
+        // Back up the pre-repair mesh once, before it's overwritten — the only way to
+        // offer "revert to original" later, since repair can leave a badly deformed mesh.
+        backupOriginalIfMissing(task.getId(), model, inExt);
+
         MeshToolRunner.RepairOutput out = meshToolRunner.repairToGlb(model, inExt);
 
         // Save the repaired mesh in place; the served model now points at our stored
@@ -639,7 +643,40 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         pointModelAtAsset(task);
         invalidateUsdz(task.getId());
         MeshyTaskResponse updated = persistAndMap(task);
-        return new com.innerstyle.meshy.dto.response.RepairResponse(out.before(), out.after(), updated);
+        return new com.innerstyle.meshy.dto.response.RepairResponse(out.before(), out.after(), updated, true);
+    }
+
+    @Override
+    @Transactional
+    public com.innerstyle.meshy.dto.response.RepairResponse revertToOriginal(UUID taskId, UUID userId) {
+        MeshyTask task = getTaskOrThrow(taskId);
+        if (task.getUserId() != null && !task.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        return revertToOriginal(taskId);
+    }
+
+    @Override
+    @Transactional
+    public com.innerstyle.meshy.dto.response.RepairResponse revertToOriginal(UUID taskId) {
+        MeshyTask task = getTaskOrThrow(taskId);
+        MeshyTaskAsset asset = assetRepository.findById(taskId)
+            .filter(a -> a.getOriginalData() != null)
+            .orElseThrow(() -> new BadRequestException("meshy.task.noOriginalBackup"));
+
+        com.innerstyle.meshy.dto.response.PrintabilityResponse before =
+            meshToolRunner.analyze(asset.getData(), asset.getFormat());
+
+        // Restore the backed-up bytes as the current model; the backup itself is kept, so
+        // reverting is not one-shot — the user can re-repair and revert again freely.
+        storeAsset(taskId, asset.getOriginalData(), asset.getOriginalFormat());
+        pointModelAtAsset(task);
+        invalidateUsdz(taskId);
+        MeshyTaskResponse updated = persistAndMap(task);
+
+        com.innerstyle.meshy.dto.response.PrintabilityResponse after =
+            meshToolRunner.analyze(asset.getOriginalData(), asset.getOriginalFormat());
+        return new com.innerstyle.meshy.dto.response.RepairResponse(before, after, updated, true);
     }
 
     /**
@@ -1735,6 +1772,33 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         asset.setContentType(contentTypeForModel(format));
         asset.setData(bytes);
         asset.setSize(bytes.length);
+        assetRepository.save(asset);
+    }
+
+    /**
+     * Snapshot {@code bytes} as the task's pristine-original backup, but only the first time —
+     * a second repair must never overwrite an already-repaired mesh over the true original.
+     */
+    private void backupOriginalIfMissing(UUID taskId, byte[] bytes, String format) {
+        MeshyTaskAsset asset = assetRepository.findById(taskId).orElse(null);
+        if (asset != null && asset.getOriginalData() != null) {
+            return; // already backed up — never overwrite it
+        }
+        if (asset == null) {
+            // No local asset row yet: these pre-repair bytes ARE the original. Seed the row's
+            // live fields too (they're NOT NULL) — the storeAsset() call right after this one
+            // overwrites them with the repaired mesh, so this is a one-instant placeholder.
+            asset = new MeshyTaskAsset();
+            asset.setTaskId(taskId);
+            asset.setFormat(format);
+            asset.setContentType(contentTypeForModel(format));
+            asset.setData(bytes);
+            asset.setSize(bytes.length);
+        }
+        asset.setOriginalFormat(format);
+        asset.setOriginalContentType(contentTypeForModel(format));
+        asset.setOriginalData(bytes);
+        asset.setOriginalSize((long) bytes.length);
         assetRepository.save(asset);
     }
 

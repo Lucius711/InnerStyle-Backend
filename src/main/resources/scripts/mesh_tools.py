@@ -17,6 +17,9 @@ Notes:
 - Vertices are welded first (merge_vertices); GLB/OBJ exporters often split vertices for
   normals/UVs, which would otherwise make every edge look like a boundary.
 - "holes" counts connected boundary loops; "nonManifoldEdges" counts edges shared by >2 faces.
+- repair rebuilds the mesh's vertices/faces from scratch (pymeshfix), which drops all colour —
+  the texture is re-attached afterwards by nearest-neighbour UV transfer from the pre-repair
+  model, or the "repaired" model would export as a plain grey/white lump.
 """
 
 import json
@@ -33,6 +36,59 @@ def load(path):
         mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
     mesh.merge_vertices()
     return mesh
+
+
+# Above this vertex count, skip the repair texture-transfer pass (it's an O(n*m) nearest-neighbour
+# search) rather than risk a slow repair or an OOM on a constrained container — the repaired model
+# just exports untextured in that case, same as before this fix.
+MAX_REPAIR_TEXTURE_VERTS = 150_000
+
+
+def _load_scene_with_texture(path):
+    """Load `path` as a Scene (process=False, so vertex order matches the glTF accessors) with its
+    UVs recovered and base-color texture captured. Used by `repair`, which otherwise has no visual
+    info to carry through pymeshfix's full vertex/face rebuild."""
+    scene = trimesh.load(path, process=False)
+    if isinstance(scene, trimesh.Trimesh):
+        scene = trimesh.Scene(scene)
+    _attach_gltf_uvs(scene, path)
+    dom = _dominant_texture(scene) or _external_texture_image(path)
+    return scene, dom
+
+
+def _combined_vertices_uv(scene):
+    """Flatten every geometry in `scene` into one (vertices, uv-or-None) pair, in the scene's own
+    per-geometry vertex order. trimesh.util.concatenate drops UVs when geometries don't share one
+    visual type (a Meshy figure's body/hair/clothes primitives usually don't), so this is done by
+    hand instead. `uv` is None unless every geometry has one UV row per vertex."""
+    verts, uvs = [], []
+    have_uv = True
+    for geom in scene.geometry.values():
+        v = np.asarray(geom.vertices)
+        verts.append(v)
+        uv = getattr(getattr(geom, "visual", None), "uv", None)
+        if uv is not None and len(uv) == len(v):
+            uvs.append(np.asarray(uv))
+        else:
+            have_uv = False
+    vertices = np.concatenate(verts, axis=0) if verts else np.zeros((0, 3))
+    uv_arr = np.concatenate(uvs, axis=0) if (have_uv and uvs) else None
+    return vertices, uv_arr
+
+
+def _nearest_uv(src_vertices, src_uv, dst_vertices, chunk=300):
+    """Nearest-neighbour UV transfer, numpy-only (no scipy dependency to add). For every point in
+    `dst_vertices`, copies the UV of the closest point in `src_vertices` (by squared distance —
+    sqrt isn't needed just to compare). Chunked so the pairwise distance matrix never fully
+    materialises for a 10k+ vertex figure."""
+    src = np.asarray(src_vertices, dtype=np.float32)
+    dst = np.asarray(dst_vertices, dtype=np.float32)
+    out = np.empty((len(dst), src_uv.shape[1]), dtype=src_uv.dtype)
+    for i in range(0, len(dst), chunk):
+        block = dst[i:i + chunk]
+        d = ((block[:, None, :] - src[None, :, :]) ** 2).sum(axis=2)
+        out[i:i + chunk] = src_uv[np.argmin(d, axis=1)]
+    return out
 
 
 def count_holes(boundary_edges):
@@ -871,11 +927,28 @@ def main():
         try:
             fixer = pymeshfix.MeshFix(mesh.vertices.astype(np.float64), mesh.faces)
             fixer.repair()
-            fixed = trimesh.Trimesh(vertices=fixer.points, faces=fixer.faces, process=True)
-            fixed.export(out)
+            fixed = trimesh.Trimesh(vertices=fixer.points, faces=fixer.faces, process=False)
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"error": "repair_failed", "detail": str(exc)}))
             sys.exit(1)
+
+        # pymeshfix rebuilds vertices/faces from scratch and carries no colour with them — without
+        # this, every repaired model exports as a flat grey/white lump regardless of how good the
+        # geometry fix was. Re-attach the source texture via nearest-neighbour UV transfer.
+        # Best-effort: any failure here just exports untextured, same as before this fix, rather
+        # than failing the whole repair over a colour problem.
+        try:
+            if len(fixed.vertices) <= MAX_REPAIR_TEXTURE_VERTS:
+                scene, dom = _load_scene_with_texture(src)
+                src_v, src_uv = _combined_vertices_uv(scene)
+                if dom is not None and src_uv is not None and len(src_v) > 0:
+                    uv = _nearest_uv(src_v, src_uv, fixed.vertices)
+                    fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)
+        except Exception:  # noqa: BLE001
+            pass
+
+        fixed.merge_vertices()
+        fixed.export(out)
         print(json.dumps({"before": before, "after": analyze(fixed)}))
         return
 

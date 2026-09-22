@@ -34,6 +34,12 @@ public interface StaffOrderService {
     RepairResponse repairModel(UUID orderId);
 
     /**
+     * Revert the order's source model back to its pre-repair backup, if one exists. Returns the
+     * before/after printability reports.
+     */
+    RepairResponse revertModel(UUID orderId);
+
+    /**
      * Fetch a fresh thumbnail image for the order's model, proxied through the server so
      * the signed Meshy CDN URL is never exposed to the browser (and always up-to-date).
      * Returns {@code null} if the order has no source task or no thumbnail.

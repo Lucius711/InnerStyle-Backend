@@ -53,4 +53,21 @@ public class MeshyTaskAsset {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    // ---- pristine backup, captured lazily on the task's first repair (see
+    // MeshyTaskServiceImpl#backupOriginalIfMissing). Null until then; never overwritten again,
+    // so "revert to original" always restores the mesh as it was before any repair ever ran. ----
+
+    @Column(name = "original_format", length = 8)
+    private String originalFormat;
+
+    @Column(name = "original_content_type", length = 64)
+    private String originalContentType;
+
+    @JdbcTypeCode(SqlTypes.VARBINARY)
+    @Column(name = "original_data", columnDefinition = "bytea")
+    private byte[] originalData;
+
+    @Column(name = "original_size")
+    private Long originalSize;
 }

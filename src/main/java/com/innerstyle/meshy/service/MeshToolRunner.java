@@ -205,6 +205,25 @@ public class MeshToolRunner {
         }
     }
 
+    /**
+     * Analyse a model's printability without repairing it (used to report before/after stats
+     * around an out-of-band restore, e.g. reverting to a backed-up original).
+     */
+    public PrintabilityResponse analyze(byte[] modelBytes, String inputExt) {
+        String ext = (inputExt == null || inputExt.isBlank()) ? "glb" : inputExt.toLowerCase();
+        Path input = null;
+        try {
+            input = Files.createTempFile("innerstyle-analyze-", "." + ext);
+            Files.write(input, modelBytes);
+            JsonNode json = run("analyze", input.toString(), null);
+            return toResponse(json);
+        } catch (IOException e) {
+            throw new UpstreamServiceException("mesh.opFailed");
+        } finally {
+            quietDelete(input);
+        }
+    }
+
     private PrintabilityResponse toResponse(JsonNode n) {
         return new PrintabilityResponse(
             n.path("watertight").asBoolean(false),

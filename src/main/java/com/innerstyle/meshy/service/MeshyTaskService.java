@@ -105,6 +105,19 @@ public interface MeshyTaskService {
      */
     com.innerstyle.meshy.dto.response.RepairResponse repairInPlace(UUID taskId);
 
+    /**
+     * Revert the given task's model back to the pre-repair (or originally uploaded/generated)
+     * backup, if one was captured. Owner-only. Returns the before/after printability reports and
+     * the updated task; the backup itself is kept, so repair/revert can be repeated freely.
+     */
+    com.innerstyle.meshy.dto.response.RepairResponse revertToOriginal(UUID taskId, UUID userId);
+
+    /**
+     * Revert without an owner check. For privileged callers only (e.g. STAFF order fulfilment);
+     * the caller is responsible for authorization.
+     */
+    com.innerstyle.meshy.dto.response.RepairResponse revertToOriginal(UUID taskId);
+
     /** Fetch a task the given user owns (404 if it isn't theirs). */
     MeshyTaskResponse getById(UUID id, UUID userId);
 
