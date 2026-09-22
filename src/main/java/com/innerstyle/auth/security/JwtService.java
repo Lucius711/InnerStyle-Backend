@@ -74,9 +74,6 @@ public class JwtService {
             .claim("roles", roles)
             .issuedAt(Date.from(now))
             .expiration(Date.from(exp));
-        if (user.getUsername() != null) {
-            builder.claim("username", user.getUsername());
-        }
         if (user.getEmail() != null) {
             builder.claim("email", user.getEmail());
         }

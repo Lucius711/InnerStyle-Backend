@@ -13,7 +13,11 @@ public record OauthProperties(
     @DefaultValue Facebook facebook
 ) {
 
-    public record Google(@DefaultValue("") String clientId) {
+    public record Google(
+        @DefaultValue("") String clientId,
+        @DefaultValue("") String clientSecret,
+        @DefaultValue("http://localhost:2207/api/user/auth/oauth/google/callback") String redirectUri
+    ) {
     }
 
     public record Facebook(@DefaultValue("") String appId, @DefaultValue("") String appSecret) {

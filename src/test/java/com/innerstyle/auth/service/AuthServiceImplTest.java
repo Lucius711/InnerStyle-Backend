@@ -1,6 +1,5 @@
 package com.innerstyle.auth.service;
 
-import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -23,7 +22,6 @@ import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
 import com.innerstyle.redis.security.TokenBlacklist;
 import org.junit.jupiter.api.BeforeEach;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -60,7 +58,6 @@ class AuthServiceImplTest {
     private RefreshTokenService refreshTokenService;
     private UserMapper userMapper;
     private TokenBlacklist tokenBlacklist;
-    private PasswordEncoder passwordEncoder;
     private SocialTokenVerifier googleVerifier;
     private AuthServiceImpl service;
 
@@ -68,11 +65,6 @@ class AuthServiceImplTest {
     private final JwtProperties jwtProperties = new JwtProperties(
         "test-secret-key-that-is-at-least-32-bytes-long!!", "innerstyle",
         Duration.ofMinutes(15), Duration.ofDays(7));
-
-    // A real record (avoids mocking a final type); mirrors application.yml defaults.
-    private final AuthProperties authProperties = new AuthProperties(
-        "http://localhost:5173", Duration.ofMinutes(15), 5, Duration.ofMinutes(15),
-        6, Duration.ofMinutes(10), 5, "no-reply@innerstyle.app", "InnerStyle");
 
     @BeforeEach
     void setUp() {
@@ -88,11 +80,9 @@ class AuthServiceImplTest {
         googleVerifier = mock(SocialTokenVerifier.class);
         when(googleVerifier.provider()).thenReturn(OauthProvider.GOOGLE);
 
-        passwordEncoder = mock(PasswordEncoder.class);
-
         service = new AuthServiceImpl(userRepository, roleRepository, oauthAccountRepository,
-            loginAuditRepository, jwtService, jwtProperties, authProperties, refreshTokenService,
-            userMapper, tokenBlacklist, passwordEncoder, List.of(googleVerifier));
+            loginAuditRepository, jwtService, jwtProperties, refreshTokenService,
+            userMapper, tokenBlacklist, List.of(googleVerifier));
     }
 
     // ------------------------------------------------------------------ socialLogin
@@ -262,7 +252,6 @@ class AuthServiceImplTest {
     private UserProfileResponse profileOf(User u) {
         return new UserProfileResponse(
             u == null ? UUID.randomUUID() : u.getId(),
-            u == null ? "user" : u.getUsername(),
             u == null ? "x@example.com" : u.getEmail(),
             "Test User", null, "ACTIVE", true, List.of("USER"), Instant.now());
     }

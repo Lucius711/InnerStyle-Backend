@@ -42,7 +42,5 @@ public abstract class AbstractIntegrationTest {
         registry.add("app.rate-limit.enabled", () -> "false");
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
-        // Mail unset → LoggingEmailSender fallback (no SMTP needed).
-        registry.add("spring.mail.username", () -> "");
     }
 }

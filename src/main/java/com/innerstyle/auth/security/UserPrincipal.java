@@ -8,7 +8,6 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
-import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -16,7 +15,7 @@ import java.util.UUID;
 /**
  * Authenticated principal exposed to controllers via {@code @AuthenticationPrincipal}.
  * Can be built from a {@link User} entity or from JWT claims (stateless). Accounts are
- * social-only, so there is no password.
+ * Google-only, so there is no password.
  */
 @Getter
 public class UserPrincipal implements UserDetails {
@@ -24,33 +23,30 @@ public class UserPrincipal implements UserDetails {
     private final UUID id;
     private final String email;
     private final boolean active;
-    private final boolean locked;
     private final Collection<? extends GrantedAuthority> authorities;
 
     public UserPrincipal(UUID id, String email, boolean active,
-                         boolean locked, Collection<? extends GrantedAuthority> authorities) {
+                         Collection<? extends GrantedAuthority> authorities) {
         this.id = id;
         this.email = email;
         this.active = active;
-        this.locked = locked;
         this.authorities = authorities;
     }
 
     public static UserPrincipal from(User user) {
-        boolean locked = user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now());
         List<SimpleGrantedAuthority> auths = user.getRoles().stream()
             .map(Role::getCode)
             .map(code -> new SimpleGrantedAuthority("ROLE_" + code))
             .toList();
         return new UserPrincipal(user.getId(), user.getEmail(),
-            user.getStatus() == UserStatus.ACTIVE, locked, auths);
+            user.getStatus() == UserStatus.ACTIVE, auths);
     }
 
     public static UserPrincipal fromClaims(UUID id, String email, List<String> roles) {
         List<SimpleGrantedAuthority> auths = roles.stream()
             .map(r -> new SimpleGrantedAuthority(r.startsWith("ROLE_") ? r : "ROLE_" + r))
             .toList();
-        return new UserPrincipal(id, email, true, false, auths);
+        return new UserPrincipal(id, email, true, auths);
     }
 
     @Override
@@ -75,7 +71,7 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return !locked;
+        return true;
     }
 
     @Override

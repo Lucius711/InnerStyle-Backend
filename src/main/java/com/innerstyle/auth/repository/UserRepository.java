@@ -18,11 +18,4 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     @Query("SELECT (COUNT(u) > 0) FROM User u WHERE LOWER(u.email) = LOWER(:email)")
     boolean existsByEmailIgnoreCase(@Param("email") String email);
-
-    /** Case-insensitive username lookup (matches the UNIQUE(LOWER(username)) index). */
-    @Query("SELECT u FROM User u WHERE LOWER(u.username) = LOWER(:username)")
-    Optional<User> findByUsernameIgnoreCase(@Param("username") String username);
-
-    @Query("SELECT (COUNT(u) > 0) FROM User u WHERE LOWER(u.username) = LOWER(:username)")
-    boolean existsByUsernameIgnoreCase(@Param("username") String username);
 }

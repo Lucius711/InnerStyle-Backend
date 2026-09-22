@@ -40,7 +40,6 @@ class JwtServiceTest {
     private User user(UUID id, String email, String... roleCodes) {
         User u = new User();
         u.setId(id);
-        u.setUsername("tester");
         u.setEmail(email);
         for (String code : roleCodes) {
             Role role = new Role();

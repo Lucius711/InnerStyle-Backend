@@ -7,15 +7,9 @@ import com.innerstyle.auth.entity.enums.OauthProvider;
 import java.util.UUID;
 
 /**
- * Authentication &amp; account lifecycle. Supports local (username + password) sign-up / sign-in
- * and social sign-in (Google / Facebook).
+ * Authentication &amp; account lifecycle. Sign-in is Google-only.
  */
 public interface AuthService {
-
-    AuthTokensResponse register(String username, String password, String fullName,
-            String ip, String userAgent);
-
-    AuthTokensResponse login(String username, String password, String ip, String userAgent);
 
     AuthTokensResponse refresh(String refreshToken, String ip, String userAgent);
 

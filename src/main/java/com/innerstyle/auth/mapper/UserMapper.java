@@ -21,7 +21,6 @@ public class UserMapper {
             .toList();
         return new UserProfileResponse(
             user.getId(),
-            user.getUsername(),
             user.getEmail(),
             user.getFullName(),
             user.getAvatarUrl(),

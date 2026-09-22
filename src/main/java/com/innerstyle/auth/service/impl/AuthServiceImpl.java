@@ -1,6 +1,5 @@
 package com.innerstyle.auth.service.impl;
 
-import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -21,14 +20,10 @@ import com.innerstyle.auth.service.RefreshTokenService;
 import com.innerstyle.auth.service.social.SocialTokenVerifier;
 import com.innerstyle.auth.service.social.SocialUserInfo;
 import com.innerstyle.common.exception.BadRequestException;
-import com.innerstyle.common.exception.ConflictException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
-import com.innerstyle.common.exception.UnauthorizedException;
 import com.innerstyle.redis.security.TokenBlacklist;
 import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,8 +35,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Default {@link AuthService}. Sign-in is social-only (Google / Facebook). All flows are
- * i18n-agnostic: errors carry stable message codes resolved by the frontend.
+ * Default {@link AuthService}. Sign-in is Google-only. All flows are i18n-agnostic: errors
+ * carry stable message codes resolved by the frontend.
  */
 @Slf4j
 @Service
@@ -55,20 +50,17 @@ public class AuthServiceImpl implements AuthService {
     private final LoginAuditRepository loginAuditRepository;
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
-    private final AuthProperties authProperties;
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
     private final TokenBlacklist tokenBlacklist;
-    private final PasswordEncoder passwordEncoder;
     private final Map<OauthProvider, SocialTokenVerifier> verifiers = new EnumMap<>(OauthProvider.class);
 
     public AuthServiceImpl(UserRepository userRepository, RoleRepository roleRepository,
                            OauthAccountRepository oauthAccountRepository,
                            LoginAuditRepository loginAuditRepository,
                            JwtService jwtService, JwtProperties jwtProperties,
-                           AuthProperties authProperties,
                            RefreshTokenService refreshTokenService, UserMapper userMapper,
-                           TokenBlacklist tokenBlacklist, PasswordEncoder passwordEncoder,
+                           TokenBlacklist tokenBlacklist,
                            List<SocialTokenVerifier> socialVerifiers) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
@@ -76,93 +68,10 @@ public class AuthServiceImpl implements AuthService {
         this.loginAuditRepository = loginAuditRepository;
         this.jwtService = jwtService;
         this.jwtProperties = jwtProperties;
-        this.authProperties = authProperties;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
         this.tokenBlacklist = tokenBlacklist;
-        this.passwordEncoder = passwordEncoder;
         socialVerifiers.forEach(v -> this.verifiers.put(v.provider(), v));
-    }
-
-    @Override
-    @Transactional
-    public AuthTokensResponse register(String username, String password, String fullName,
-                                       String ip, String userAgent) {
-        String normalizedUsername = username.trim().toLowerCase();
-        if (userRepository.existsByUsernameIgnoreCase(normalizedUsername)) {
-            throw new ConflictException("user.usernameExists");
-        }
-        Role userRole = roleRepository.findByCode(ROLE_USER)
-            .orElseThrow(() -> new IllegalStateException("Seed role USER missing"));
-
-        User user = new User();
-        user.setUsername(normalizedUsername);
-        user.setPasswordHash(passwordEncoder.encode(password));
-        user.setFullName(fullName != null && !fullName.isBlank() ? fullName.trim() : normalizedUsername);
-        user.setStatus(UserStatus.ACTIVE);
-        user.addRole(userRole);
-        user.setLastLoginAt(Instant.now());
-        try {
-            userRepository.save(user);
-        } catch (DataIntegrityViolationException ex) {
-            throw new ConflictException("user.usernameExists");
-        }
-
-        audit(user.getId(), normalizedUsername, true, "register", ip, userAgent);
-        log.info("Local account registered: {}", user.getId());
-        return issueTokens(user, ip, userAgent);
-    }
-
-    @Override
-    @Transactional
-    public AuthTokensResponse login(String username, String password, String ip, String userAgent) {
-        String normalizedUsername = username.trim().toLowerCase();
-        User user = userRepository.findByUsernameIgnoreCase(normalizedUsername).orElse(null);
-
-        if (user != null && isLocked(user)) {
-            audit(user.getId(), normalizedUsername, false, "account_locked", ip, userAgent);
-            throw new UnauthorizedException("auth.accountLocked");
-        }
-
-        if (user == null || user.getPasswordHash() == null
-                || !passwordEncoder.matches(password, user.getPasswordHash())) {
-            if (user != null) {
-                registerFailedLogin(user);
-            }
-            audit(user == null ? null : user.getId(), normalizedUsername, false,
-                "invalid_credentials", ip, userAgent);
-            throw new UnauthorizedException("auth.invalidCredentials");
-        }
-        if (user.getStatus() != UserStatus.ACTIVE) {
-            audit(user.getId(), normalizedUsername, false, "account_inactive", ip, userAgent);
-            throw new UnauthorizedException("auth.accountInactive");
-        }
-
-        user.setFailedLoginCount(0);
-        user.setLockedUntil(null);
-        user.setLastLoginAt(Instant.now());
-        userRepository.save(user);
-        audit(user.getId(), normalizedUsername, true, "password", ip, userAgent);
-        return issueTokens(user, ip, userAgent);
-    }
-
-    /** True while a prior lockout (see {@link #registerFailedLogin}) is still in effect. */
-    private boolean isLocked(User user) {
-        return user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now());
-    }
-
-    /**
-     * Increments the failed-login counter and locks the account once it reaches the configured
-     * threshold (finding TRUNG: this bookkeeping existed on the entity/config but was never
-     * wired up, leaving login with no server-side brute-force lockout at all).
-     */
-    private void registerFailedLogin(User user) {
-        int failures = user.getFailedLoginCount() + 1;
-        user.setFailedLoginCount(failures);
-        if (failures >= authProperties.maxFailedLogins()) {
-            user.setLockedUntil(Instant.now().plus(authProperties.lockDuration()));
-        }
-        userRepository.save(user);
     }
 
     @Override
