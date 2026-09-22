@@ -19,11 +19,15 @@ Notes:
 - "holes" counts connected boundary loops; "nonManifoldEdges" counts edges shared by >2 faces.
 - repair rebuilds the mesh's vertices/faces from scratch (pymeshfix), which drops all colour —
   the texture is re-attached afterwards by nearest-neighbour UV transfer from the pre-repair
-  model, or the "repaired" model would export as a plain grey/white lump.
+  model, or the "repaired" model would export as a plain grey/white lump. That transfer is capped
+  (size guard + a hard wall-clock budget) and always best-effort: past either limit it just skips,
+  same as if no texture had been found, rather than risk an API-gateway timeout.
 """
 
+import gc
 import json
 import sys
+import time
 
 import numpy as np
 import trimesh
@@ -41,7 +45,7 @@ def load(path):
 # Above this vertex count, skip the repair texture-transfer pass (it's an O(n*m) nearest-neighbour
 # search) rather than risk a slow repair or an OOM on a constrained container — the repaired model
 # just exports untextured in that case, same as before this fix.
-MAX_REPAIR_TEXTURE_VERTS = 150_000
+MAX_REPAIR_TEXTURE_VERTS = 60_000
 
 
 def _load_scene_with_texture(path):
@@ -76,15 +80,51 @@ def _combined_vertices_uv(scene):
     return vertices, uv_arr
 
 
-def _nearest_uv(src_vertices, src_uv, dst_vertices, chunk=300):
+def _dedupe_points(points, values, decimals=5):
+    """Collapse near-duplicate 3D points (e.g. per-face-corner vertex splits for UVs/normals in a
+    GLB export) down to one representative each, keeping whichever duplicate's row in `values` is
+    kept. Shrinks a nearest-neighbour search space back toward the mesh's true (welded) vertex
+    count instead of its export-inflated one."""
+    if len(points) == 0:
+        return points, values
+    _, idx = np.unique(np.round(points, decimals), axis=0, return_index=True)
+    return points[idx], values[idx]
+
+
+def _mesh_from_scene(scene):
+    """Merge every geometry in `scene` into one welded Trimesh -- the same result as
+    load()'s `force="mesh"` path, but reused from an already-loaded scene so `repair` only parses
+    the source file (and decodes its texture image) once instead of twice."""
+    verts, faces = [], []
+    voffset = 0
+    for geom in scene.geometry.values():
+        v = np.asarray(geom.vertices)
+        verts.append(v)
+        faces.append(np.asarray(geom.faces) + voffset)
+        voffset += len(v)
+    mesh = trimesh.Trimesh(
+        vertices=np.concatenate(verts, axis=0) if verts else np.zeros((0, 3)),
+        faces=np.concatenate(faces, axis=0) if faces else np.zeros((0, 3), dtype=np.int64),
+        process=False,
+    )
+    mesh.merge_vertices()
+    return mesh
+
+
+def _nearest_uv(src_vertices, src_uv, dst_vertices, chunk=200, time_budget=15.0):
     """Nearest-neighbour UV transfer, numpy-only (no scipy dependency to add). For every point in
     `dst_vertices`, copies the UV of the closest point in `src_vertices` (by squared distance —
     sqrt isn't needed just to compare). Chunked so the pairwise distance matrix never fully
-    materialises for a 10k+ vertex figure."""
+    materialises for a 10k+ vertex figure. Bailing out past `time_budget` seconds (caught by the
+    caller, which just exports untextured) matters more here than finishing: this runs inside a
+    repair request the API gateway will 504 if it takes too long, whatever the mesh size."""
     src = np.asarray(src_vertices, dtype=np.float32)
     dst = np.asarray(dst_vertices, dtype=np.float32)
     out = np.empty((len(dst), src_uv.shape[1]), dtype=src_uv.dtype)
+    deadline = time.monotonic() + time_budget
     for i in range(0, len(dst), chunk):
+        if time.monotonic() > deadline:
+            raise TimeoutError("nearest_uv exceeded its time budget")
         block = dst[i:i + chunk]
         d = ((block[:, None, :] - src[None, :, :]) ** 2).sum(axis=2)
         out[i:i + chunk] = src_uv[np.argmin(d, axis=1)]
@@ -908,21 +948,24 @@ def main():
                           "srcTex": src_diag, "outTex": _texture_diag(out)}))
         return
 
-    try:
-        mesh = load(src)
-    except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"error": "load_failed", "detail": str(exc)}))
-        sys.exit(1)
-
-    if cmd == "analyze":
-        print(json.dumps(analyze(mesh)))
-        return
-
     if cmd == "repair":
         if len(sys.argv) < 4:
             print(json.dumps({"error": "repair requires <output>"}))
             sys.exit(2)
         out = sys.argv[3]
+        # One parse of the source (as a textured scene) serves both the mesh pymeshfix repairs and
+        # the texture repair re-attaches afterwards -- loading it a second time here would decode
+        # the base-color image twice, needlessly doubling peak memory on top of pymeshfix's own
+        # (already sizeable) footprint.
+        try:
+            scene, dom = _load_scene_with_texture(src)
+            src_v, src_uv = _combined_vertices_uv(scene)
+            if src_uv is not None:
+                src_v, src_uv = _dedupe_points(src_v, src_uv)
+            mesh = _mesh_from_scene(scene)
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"error": "load_failed", "detail": str(exc)}))
+            sys.exit(1)
         before = analyze(mesh)
         try:
             fixer = pymeshfix.MeshFix(mesh.vertices.astype(np.float64), mesh.faces)
@@ -931,6 +974,11 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"error": "repair_failed", "detail": str(exc)}))
             sys.exit(1)
+        # Drop pymeshfix's own workspace and the pre-repair mesh before the texture pass -- neither
+        # is needed past this point, and freeing them first keeps the nearest-neighbour transfer's
+        # peak memory from stacking on top of pymeshfix's.
+        del fixer, mesh
+        gc.collect()
 
         # pymeshfix rebuilds vertices/faces from scratch and carries no colour with them — without
         # this, every repaired model exports as a flat grey/white lump regardless of how good the
@@ -938,18 +986,29 @@ def main():
         # Best-effort: any failure here just exports untextured, same as before this fix, rather
         # than failing the whole repair over a colour problem.
         try:
-            if len(fixed.vertices) <= MAX_REPAIR_TEXTURE_VERTS:
-                scene, dom = _load_scene_with_texture(src)
-                src_v, src_uv = _combined_vertices_uv(scene)
-                if dom is not None and src_uv is not None and len(src_v) > 0:
-                    uv = _nearest_uv(src_v, src_uv, fixed.vertices)
-                    fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)
+            if dom is not None and src_uv is not None and len(src_v) > 0 \
+                    and len(fixed.vertices) <= MAX_REPAIR_TEXTURE_VERTS \
+                    and len(src_v) <= MAX_REPAIR_TEXTURE_VERTS:
+                uv = _nearest_uv(src_v, src_uv, fixed.vertices)
+                fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)
         except Exception:  # noqa: BLE001
             pass
+        del scene, src_v, src_uv
+        gc.collect()
 
         fixed.merge_vertices()
         fixed.export(out)
         print(json.dumps({"before": before, "after": analyze(fixed)}))
+        return
+
+    try:
+        mesh = load(src)
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"error": "load_failed", "detail": str(exc)}))
+        sys.exit(1)
+
+    if cmd == "analyze":
+        print(json.dumps(analyze(mesh)))
         return
 
     print(json.dumps({"error": "unknown command: " + cmd}))
