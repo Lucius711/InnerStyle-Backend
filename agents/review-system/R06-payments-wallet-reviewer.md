@@ -2,13 +2,13 @@
 
 ## Mission
 Audit everything that touches money: the `wallet` module, credit/balance ledger, holds, and the
-VNPay / Momo payment gateways with their cryptographic signing. This is the highest-blast-radius
+payOS / Momo payment gateways with their cryptographic signing. This is the highest-blast-radius
 domain — a defect here means lost money, double charges, or free credits. You own *financial
 correctness and payment-integration integrity*.
 
 ## Scope
 - `wallet` module: entities, services, ledger/balance logic, holds, seed data.
-- Gateways: `VnpayGateway`, `MomoGateway`, `CryptoSigner`, `GatewayVerification`.
+- Gateways: `PayosGateway`, `MomoGateway`, `CryptoSigner`, `GatewayVerification`.
 - Payment return/callback flow (backend) and `PaymentReturn.jsx` / `pricing.js` (frontend parity).
 - Idempotency of callbacks; amount/currency integrity; hold→capture→release lifecycle.
 - Pricing rules incl. the multi-image / figurine pricing migration.

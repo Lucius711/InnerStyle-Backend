@@ -11,30 +11,17 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "app.payment")
 public record PaymentProperties(
     @DefaultValue("PT15M") Duration orderTtl,
-    @DefaultValue Vnpay vnpay,
-    @DefaultValue Momo momo
+    @DefaultValue Payos payos
 ) {
 
-    /** VNPay (https://sandbox.vnpayment.vn) merchant configuration. */
-    public record Vnpay(
-        @DefaultValue("") String tmnCode,
-        @DefaultValue("") String hashSecret,
-        @DefaultValue("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html") String payUrl,
-        @DefaultValue("2.1.0") String version,
-        @DefaultValue("pay") String command,
-        @DefaultValue("vn") String locale,
-        @DefaultValue("http://localhost:5173/wallet/vnpay-return") String returnUrl
-    ) {
-    }
-
-    /** MoMo (https://test-payment.momo.vn) partner configuration. */
-    public record Momo(
-        @DefaultValue("") String partnerCode,
-        @DefaultValue("") String accessKey,
-        @DefaultValue("") String secretKey,
-        @DefaultValue("https://test-payment.momo.vn/v2/gateway/api/create") String endpoint,
-        @DefaultValue("http://localhost:5173/wallet/momo-return") String redirectUrl,
-        @DefaultValue("http://localhost:2207/api/common/payments/momo/ipn") String ipnUrl
+    /** payOS (https://payos.vn) merchant configuration. */
+    public record Payos(
+        @DefaultValue("") String clientId,
+        @DefaultValue("") String apiKey,
+        @DefaultValue("") String checksumKey,
+        @DefaultValue("https://api-merchant.payos.vn") String endpoint,
+        @DefaultValue("http://localhost:5173/wallet/payos-return") String returnUrl,
+        @DefaultValue("http://localhost:5173/wallet/payos-return") String cancelUrl
     ) {
     }
 }

@@ -18,7 +18,7 @@ the two repositories:
 |---|---|
 | Modular monolith: `auth`, `membership`, `meshy`, `print`, `wallet`, `redis`, `common`, `config` | Architecture + per-concern reviewers, not one "backend" reviewer |
 | JWT + social login + `SecurityConfig` + multi-role (rule 11) + Redis token blacklist | Dedicated **Security & Auth** reviewer |
-| `wallet` with VNPay, Momo, `CryptoSigner`, holds/ledger, payment-return flow | Dedicated **Payments & Wallet Integrity** reviewer (money = highest blast radius) |
+| `wallet` with payOS, Momo, `CryptoSigner`, holds/ledger, payment-return flow | Dedicated **Payments & Wallet Integrity** reviewer (money = highest blast radius) |
 | MeshyAI `RestClient` external dependency + task polling | Dedicated **Third-party Integration** reviewer |
 | Redis cache + rate-limit filter + async task polling | Dedicated **Caching / Rate-limit / Concurrency** reviewer |
 | 22 Flyway migrations, Postgres, `master-data-standardization` rule | Dedicated **Database & Migration** reviewer |

@@ -1,17 +1,17 @@
 package com.innerstyle.print.dto.response;
 
+import com.innerstyle.wallet.dto.response.PaymentInitResponse;
 import io.swagger.v3.oas.annotations.media.Schema;
 
-import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Result of placing a print order: the order id + the gateway URL to pay.
+ * Result of placing a print order: the order id plus the payment init (gateway URL and, payOS
+ * only, the raw VietQR payload for an in-app QR).
  */
 @Schema(description = "Print order created, awaiting payment")
 public record PrintOrderInitResponse(
     UUID orderId,
-    BigDecimal amount,
-    String payUrl
+    PaymentInitResponse payment
 ) {
 }

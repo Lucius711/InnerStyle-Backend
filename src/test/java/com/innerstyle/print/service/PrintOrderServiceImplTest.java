@@ -87,13 +87,13 @@ class PrintOrderServiceImplTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
         when(printOrderRepository.save(any(PrintOrder.class))).thenAnswer(i -> i.getArgument(0));
         when(paymentService.createPrintPayment(eq(userId), any(), eq(new BigDecimal("749000")),
-            eq(PaymentProvider.VNPAY), eq("1.2.3.4")))
-            .thenReturn(new PaymentInitResponse("IS1", "VNPAY", new BigDecimal("749000"), "https://pay"));
+            eq(PaymentProvider.PAYOS), eq("1.2.3.4")))
+            .thenReturn(new PaymentInitResponse("IS1", "PAYOS", new BigDecimal("749000"), "https://pay", null));
 
-        PrintOrderInitResponse res = service.placeOrder(userId, request("VNPAY", 12), "1.2.3.4");
+        PrintOrderInitResponse res = service.placeOrder(userId, request("PAYOS", 12), "1.2.3.4");
 
-        assertThat(res.amount()).isEqualByComparingTo("749000");
-        assertThat(res.payUrl()).isEqualTo("https://pay");
+        assertThat(res.payment().amount()).isEqualByComparingTo("749000");
+        assertThat(res.payment().payUrl()).isEqualTo("https://pay");
     }
 
     @Test
@@ -102,7 +102,7 @@ class PrintOrderServiceImplTest {
         when(meshyTaskRepository.findById(taskId))
             .thenReturn(Optional.of(task(UUID.randomUUID(), MeshyTaskStatus.SUCCEEDED)));
 
-        assertThatThrownBy(() -> service.placeOrder(userId, request("VNPAY", 12), "ip"))
+        assertThatThrownBy(() -> service.placeOrder(userId, request("PAYOS", 12), "ip"))
             .isInstanceOf(BadRequestException.class)
             .hasMessageContaining("print.task.notOwned");
         verify(paymentService, never()).createPrintPayment(any(), any(), any(), any(), any());
@@ -114,7 +114,7 @@ class PrintOrderServiceImplTest {
         when(meshyTaskRepository.findById(taskId))
             .thenReturn(Optional.of(task(userId, MeshyTaskStatus.PENDING)));
 
-        assertThatThrownBy(() -> service.placeOrder(userId, request("VNPAY", 12), "ip"))
+        assertThatThrownBy(() -> service.placeOrder(userId, request("PAYOS", 12), "ip"))
             .isInstanceOf(BadRequestException.class)
             .hasMessageContaining("print.task.notReady");
     }
@@ -124,7 +124,7 @@ class PrintOrderServiceImplTest {
     void placeOrder_unknownTask() {
         when(meshyTaskRepository.findById(taskId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.placeOrder(userId, request("VNPAY", 12), "ip"))
+        assertThatThrownBy(() -> service.placeOrder(userId, request("PAYOS", 12), "ip"))
             .isInstanceOf(ResourceNotFoundException.class)
             .hasMessageContaining("meshy.task.notFound");
     }
@@ -136,7 +136,7 @@ class PrintOrderServiceImplTest {
             .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
         when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
 
-        assertThatThrownBy(() -> service.placeOrder(userId, request("VNPAY", 99), "ip"))
+        assertThatThrownBy(() -> service.placeOrder(userId, request("PAYOS", 99), "ip"))
             .isInstanceOf(BadRequestException.class)
             .hasMessageContaining("print.size.invalid");
     }

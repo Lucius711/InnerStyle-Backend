@@ -31,30 +31,17 @@ public class PaymentController {
 
     private final PaymentService paymentService;
 
-    @Operation(summary = "VNPay IPN (server-to-server). Returns {RspCode, Message}.")
-    @GetMapping("/vnpay/ipn")
-    public Map<String, String> vnpayIpn(@RequestParam Map<String, String> params) {
-        return paymentService.handleVnpayIpn(params);
-    }
-
-    @Operation(summary = "MoMo IPN (server-to-server). Returns 204.")
-    @PostMapping("/momo/ipn")
+    @Operation(summary = "payOS webhook (server-to-server). Returns 204.")
+    @PostMapping("/payos/webhook")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void momoIpn(@RequestBody Map<String, String> payload) {
-        paymentService.handleMomoIpn(payload);
+    public void payosWebhook(@RequestBody Map<String, Object> payload) {
+        paymentService.handlePayosWebhook(payload);
     }
 
-    @Operation(summary = "Confirm a VNPay browser-return (verifies + credits idempotently)")
-    @GetMapping("/vnpay/return")
-    public ApiResponse<PaymentResultResponse> vnpayReturn(@RequestParam Map<String, String> params) {
+    @Operation(summary = "Confirm a payOS browser-return (verifies via payOS + credits idempotently)")
+    @GetMapping("/payos/return")
+    public ApiResponse<PaymentResultResponse> payosReturn(@RequestParam Map<String, String> params) {
         return ApiResponse.success("payment.return",
-            paymentService.confirmReturn(PaymentProvider.VNPAY, params));
-    }
-
-    @Operation(summary = "Confirm a MoMo browser-return (verifies + credits idempotently)")
-    @GetMapping("/momo/return")
-    public ApiResponse<PaymentResultResponse> momoReturn(@RequestParam Map<String, String> params) {
-        return ApiResponse.success("payment.return",
-            paymentService.confirmReturn(PaymentProvider.MOMO, params));
+            paymentService.confirmReturn(PaymentProvider.PAYOS, params));
     }
 }

@@ -113,7 +113,7 @@ validation codes are namespaced `validation.*`; business codes are e.g. `auth.ve
 | TC-MEM-003 | Lazy renewal after period end | E | High | credits reset to plan allowance; RENEWAL ledger |
 | TC-MEM-004 | Public list plans | P | Medium | 200; active plans sorted by sortOrder |
 | TC-MEM-005 | Public list operation-credits | P | Medium | 200; active operation costs only |
-| TC-MEM-006 | Subscribe PRO via VNPAY | P | Critical | 200; payUrl returned; PENDING payment order |
+| TC-MEM-006 | Subscribe PRO via PAYOS | P | Critical | 200; payUrl returned; PENDING payment order |
 | TC-MEM-007 | Subscribe invalid planCode | N | High | 400 `validation.planCode.invalid` |
 | TC-MEM-008 | Subscribe FREE (non-payable) | N | High | 400 `membership.plan.notPayable` |
 | TC-MEM-009 | Subscribe invalid provider | N | High | 400 `validation.provider.invalid` |
@@ -175,11 +175,11 @@ validation codes are namespaced `validation.*`; business codes are e.g. `auth.ve
 
 | TC-ID | Title | Type | Priority | Expected |
 |-------|-------|------|----------|----------|
-| TC-PAY-001 | VNPay IPN valid success | P | Critical | RspCode 00; order SUCCEEDED; fulfilment run |
-| TC-PAY-002 | VNPay IPN invalid signature | S | Critical | RspCode 97; not settled; callback recorded |
-| TC-PAY-003 | VNPay IPN unknown order | N | High | RspCode 01 |
-| TC-PAY-004 | VNPay IPN amount mismatch | S | Critical | RspCode 04; not settled |
-| TC-PAY-005 | VNPay IPN already confirmed (idempotent) | E | Critical | RspCode 02; single fulfilment |
+| TC-PAY-001 | payOS IPN valid success | P | Critical | RspCode 00; order SUCCEEDED; fulfilment run |
+| TC-PAY-002 | payOS IPN invalid signature | S | Critical | RspCode 97; not settled; callback recorded |
+| TC-PAY-003 | payOS IPN unknown order | N | High | RspCode 01 |
+| TC-PAY-004 | payOS IPN amount mismatch | S | Critical | RspCode 04; not settled |
+| TC-PAY-005 | payOS IPN already confirmed (idempotent) | E | Critical | RspCode 02; single fulfilment |
 | TC-PAY-006 | MoMo IPN valid success | P | Critical | 204; order SUCCEEDED; fulfilment |
 | TC-PAY-007 | MoMo IPN invalid signature | S | Critical | 204; not settled (logged) |
 | TC-PAY-008 | MoMo IPN amount mismatch | S | Critical | 204; not settled |

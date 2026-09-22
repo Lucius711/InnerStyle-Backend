@@ -10,7 +10,7 @@ import java.util.UUID;
 
 /**
  * Places and lists 3D-print orders. Placing an order captures the recipient + shipping address,
- * creates a PENDING order and starts a direct VNPay/MoMo payment; the order becomes PAID when the
+ * creates a PENDING order and starts a direct payOS payment; the order becomes PAID when the
  * gateway confirms.
  */
 public interface PrintOrderService {

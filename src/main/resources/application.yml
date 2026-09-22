@@ -120,7 +120,7 @@ app:
       # Leave both blank to skip the check (dev only).
       app-secret: ${FACEBOOK_APP_SECRET:}
 
-  # --- 3D print pricing (paid directly via VNPay/MoMo) ---
+  # --- 3D print pricing (paid directly via payOS) ---
   # `fee` is the fallback; `prices` is the sell price (VND) per figurine height in cm.
   print:
     fee: ${PRINT_FEE:300000}
@@ -132,18 +132,13 @@ app:
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:
     order-ttl: ${PAYMENT_ORDER_TTL:PT15M}
-    vnpay:
-      tmn-code: ${VNPAY_TMN_CODE:}
-      hash-secret: ${VNPAY_HASH_SECRET:}
-      pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
-      return-url: ${VNPAY_RETURN_URL:http://localhost:5173/wallet/vnpay-return}
-    momo:
-      partner-code: ${MOMO_PARTNER_CODE:}
-      access-key: ${MOMO_ACCESS_KEY:}
-      secret-key: ${MOMO_SECRET_KEY:}
-      endpoint: ${MOMO_ENDPOINT:https://test-payment.momo.vn/v2/gateway/api/create}
-      redirect-url: ${MOMO_REDIRECT_URL:http://localhost:5173/wallet/momo-return}
-      ipn-url: ${MOMO_IPN_URL:http://localhost:2207/api/common/payments/momo/ipn}
+    payos:
+      client-id: ${PAYOS_CLIENT_ID:}
+      api-key: ${PAYOS_API_KEY:}
+      checksum-key: ${PAYOS_CHECKSUM_KEY:}
+      endpoint: ${PAYOS_ENDPOINT:https://api-merchant.payos.vn}
+      return-url: ${PAYOS_RETURN_URL:http://localhost:5173/wallet/payos-return}
+      cancel-url: ${PAYOS_CANCEL_URL:http://localhost:5173/wallet/payos-return}
 
   # --- Redis-backed cache + rate limiting (fail-open if Redis is unavailable) ---
   redis:

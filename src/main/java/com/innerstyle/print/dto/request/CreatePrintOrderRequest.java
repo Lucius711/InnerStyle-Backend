@@ -28,8 +28,8 @@ public class CreatePrintOrderRequest {
     private UUID taskId;
 
     @NotNull(message = "1.provider.required")
-    @Pattern(regexp = "VNPAY|MOMO", message = "2.provider.invalid")
-    @Schema(description = "Payment method", example = "VNPAY", allowableValues = {"VNPAY", "MOMO"})
+    @Pattern(regexp = "PAYOS", message = "2.provider.invalid")
+    @Schema(description = "Payment method", example = "PAYOS", allowableValues = {"PAYOS"})
     private String provider;
 
     @NotNull(message = "1.sizeCm.required")

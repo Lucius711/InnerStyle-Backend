@@ -8,28 +8,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 /**
- * HMAC helpers for gateway signatures: VNPay uses HMAC-SHA512, MoMo uses HMAC-SHA256
- * (both lower-case hex).
+ * HMAC-SHA256 helper for gateway signatures (lower-case hex).
  */
 @Component
 public class CryptoSigner {
 
-    public String hmacSha512Hex(String secret, String data) {
-        return hmacHex("HmacSHA512", secret, data);
-    }
-
     public String hmacSha256Hex(String secret, String data) {
-        return hmacHex("HmacSHA256", secret, data);
-    }
-
-    private String hmacHex(String algorithm, String secret, String data) {
         try {
-            Mac mac = Mac.getInstance(algorithm);
-            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), algorithm));
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] out = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(out);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to compute " + algorithm, e);
+            throw new IllegalStateException("Failed to compute HmacSHA256", e);
         }
     }
 

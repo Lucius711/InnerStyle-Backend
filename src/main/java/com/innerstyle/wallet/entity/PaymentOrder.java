@@ -27,7 +27,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * A direct gateway payment (VNPay / MoMo). {@code purpose} + {@code reference} say what it funds:
+ * A direct payOS gateway payment. {@code purpose} + {@code reference} say what it funds:
  * SUBSCRIPTION (reference = plan code) or PRINT (reference = print order id). No virtual wallet.
  */
 @Entity

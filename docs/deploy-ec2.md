@@ -33,7 +33,7 @@ sudo usermod -aG docker $USER && newgrp docker   # run docker without sudo
 cd ~/innerstyle/InnerStyle-Backend/InnerStyle-Backend
 cp .env.deploy.example .env
 nano .env     # set POSTGRES_PASSWORD, JWT_SECRET, FRONTEND_BASE_URL=http://<EC2 public DNS>,
-              # MESHY_API_KEY, VNPAY_*, MOMO_*  (use your EC2 DNS in the return/ipn URLs)
+              # MESHY_API_KEY, PAYOS_*  (use your EC2 DNS in the return/webhook URLs)
 ```
 
 ## 4. Build & run
@@ -46,9 +46,8 @@ docker compose logs -f backend     # watch Flyway migrations + startup
 - Open `http://<EC2 public DNS>/` for the app, `…/swagger-ui.html` for the API docs.
 
 ## 5. Payment gateway callbacks
-VNPay / MoMo call your server directly. In each dashboard set the IPN/return URLs to your public host:
-- VNPay IPN: `http://<host>/api/common/payments/vnpay/ipn`
-- MoMo IPN:  `http://<host>/api/common/payments/momo/ipn`
+payOS calls your server directly. In each dashboard set the webhook/IPN URLs to your public host:
+- payOS webhook: `http://<host>/api/common/payments/payos/webhook`
 These must be reachable from the internet (port 80/443 open). Use **HTTPS in production**.
 
 ## 6. HTTPS (recommended)

@@ -30,7 +30,7 @@ import java.util.UUID;
 
 /**
  * Default {@link PrintOrderService}. Validates ownership of a SUCCEEDED model, creates a PENDING
- * print order, and starts a direct VNPay/MoMo payment. The payment IPN/return marks it PAID.
+ * print order, and starts a direct payOS payment. The payment webhook/return marks it PAID.
  */
 @Slf4j
 @Service
@@ -89,7 +89,7 @@ public class PrintOrderServiceImpl implements PrintOrderService {
             userId, order.getId(), amount, provider, clientIp);
         log.info("Print order {} placed by {} ({}cm, await payment {})",
             order.getId(), userId, sizeCm, provider);
-        return new PrintOrderInitResponse(order.getId(), amount, pay.payUrl());
+        return new PrintOrderInitResponse(order.getId(), pay);
     }
 
     @Override

@@ -4,7 +4,7 @@
 > liệu này đã bị **gỡ bỏ hoàn toàn** (migration
 > `V20260620160000__remove_wallet_repurpose_payments.sql`) — lưu tiền hộ người dùng đòi hỏi giấy
 > phép trung gian thanh toán/e-money tại Việt Nam. Kiến trúc hiện tại là **thanh toán trực tiếp,
-> không giữ số dư**: mỗi lần thanh toán VNPay/MoMo tài trợ thẳng cho một mục đích cụ thể (gói
+> không giữ số dư**: mỗi lần thanh toán payOS tài trợ thẳng cho một mục đích cụ thể (gói
 > subscription hoặc đơn in), không có `WalletService`, không có `dtb_wallet_transactions`, không
 > có "nạp tiền vào ví".
 
@@ -29,10 +29,8 @@ Thanh toán: cổng gọi IPN → backend verify chữ ký HMAC + khớp số ti
 |--------|------|--------|-------|
 | POST | `/api/user/membership/subscribe` | Bearer (USER) | Tạo đơn thanh toán gói subscription → trả `payUrl` |
 | POST | `/api/user/print/orders` | Bearer (USER) | Tạo đơn in (giá server-side) → trả `payUrl` |
-| GET  | `/api/common/payments/vnpay/ipn` | public (HMAC) | IPN VNPay (server-to-server) |
-| POST | `/api/common/payments/momo/ipn` | public (HMAC) | IPN MoMo (server-to-server) |
-| GET  | `/api/common/payments/vnpay/return` | public (HMAC) | Redirect người dùng sau khi thanh toán VNPay |
-| GET  | `/api/common/payments/momo/return` | public (HMAC) | Redirect người dùng sau khi thanh toán MoMo |
+| POST | `/api/common/payments/payos/webhook` | public (HMAC) | Webhook payOS (server-to-server) |
+| GET  | `/api/common/payments/payos/return` | public (payOS lookup) | Redirect người dùng sau khi thanh toán payOS |
 
 ## An toàn
 
@@ -42,11 +40,11 @@ Thanh toán: cổng gọi IPN → backend verify chữ ký HMAC + khớp số ti
   `@Transactional`, cộng với early-return khi đơn đã `SUCCEEDED` — hai IPN cho cùng một đơn
   không thể cùng settle. DB có unique index từng phần trên `(provider, provider_txn_ref)`.
 - Số tiền đơn được so khớp với số tiền cổng thanh toán báo về trước khi settle.
-- IPN endpoint public nhưng chỉ tin khi chữ ký hợp lệ.
+- IPN/webhook endpoint public nhưng chỉ tin khi chữ ký hợp lệ.
+- payOS: `returnUrl` redirect không có chữ ký, nên `/payos/return` tra cứu trạng thái đơn trực tiếp từ payOS (`GET /v2/payment-requests/{orderCode}`) thay vì tin query param trên URL.
 
 ## Cấu hình (`.env`)
-VNPay: `VNPAY_TMN_CODE`, `VNPAY_HASH_SECRET` (lấy ở sandbox vnpayment.vn).
-MoMo: `MOMO_PARTNER_CODE`, `MOMO_ACCESS_KEY`, `MOMO_SECRET_KEY` (test-payment.momo.vn).
+payOS: `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` (lấy ở my.payos.vn).
 
 ## Meshy 3D generation billing
 

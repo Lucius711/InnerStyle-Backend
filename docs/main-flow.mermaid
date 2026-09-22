@@ -26,7 +26,7 @@ flowchart TD
     D3 -- No --> END3([End])
     D3 -- Yes --> P6[Create print order]
 
-    P6 --> P7[Pay via VNPay / MoMo]
+    P6 --> P7[Pay via payOS]
     P7 --> D4{Payment success?}
 
     D4 -- No --> E4[Cancel order] --> END4([End])

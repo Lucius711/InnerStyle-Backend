@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Expose your local InnerStyle app to the internet (for VNPay/MoMo callbacks) and write the
+  Expose your local InnerStyle app to the internet (for payOS callbacks) and write the
   public URLs into .env automatically. Uses Cloudflare Tunnel (cloudflared) — no account needed.
 
 .DESCRIPTION
@@ -9,8 +9,8 @@
   - If you run backend separately (Spring Boot on 2207), use -Port 2207 (the return page will be
     served by the backend tunnel too — for split dev prefer docker).
 
-  After it prints the URL, register this IPN URL in the VNPay portal:
-      <public-url>/api/common/payments/vnpay/ipn
+  After it prints the URL, register this webhook URL in the payOS dashboard:
+      <public-url>/api/common/payments/payos/webhook
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1
@@ -79,15 +79,14 @@ try {
 
   Update-EnvFile -path $EnvFile -values @{
     "FRONTEND_BASE_URL" = $publicUrl
-    "VNPAY_RETURN_URL"  = "$publicUrl/wallet/vnpay-return"
-    "MOMO_REDIRECT_URL" = "$publicUrl/wallet/momo-return"
-    "MOMO_IPN_URL"      = "$publicUrl/api/common/payments/momo/ipn"
+    "PAYOS_RETURN_URL"  = "$publicUrl/wallet/payos-return"
+    "PAYOS_CANCEL_URL"  = "$publicUrl/wallet/payos-return"
   }
 
   Write-Host ""
   Write-Host "Updated $EnvFile. Now:" -ForegroundColor Cyan
-  Write-Host "  1) Register this VNPay IPN URL in the VNPay portal:" -ForegroundColor White
-  Write-Host "       $publicUrl/api/common/payments/vnpay/ipn" -ForegroundColor Yellow
+  Write-Host "  1) Register this payOS webhook URL in the payOS dashboard:" -ForegroundColor White
+  Write-Host "       $publicUrl/api/common/payments/payos/webhook" -ForegroundColor Yellow
   Write-Host "  2) Restart the backend so it picks up the new URLs:" -ForegroundColor White
   Write-Host "       docker compose up -d backend        (docker mode)" -ForegroundColor Gray
   Write-Host "       or restart 'mvn spring-boot:run'    (local mode)" -ForegroundColor Gray

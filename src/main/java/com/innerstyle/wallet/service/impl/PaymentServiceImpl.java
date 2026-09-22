@@ -20,8 +20,7 @@ import com.innerstyle.wallet.entity.enums.PaymentProvider;
 import com.innerstyle.wallet.entity.enums.PaymentPurpose;
 import com.innerstyle.wallet.entity.enums.PaymentStatus;
 import com.innerstyle.wallet.gateway.GatewayVerification;
-import com.innerstyle.wallet.gateway.MomoGateway;
-import com.innerstyle.wallet.gateway.VnpayGateway;
+import com.innerstyle.wallet.gateway.PayosGateway;
 import com.innerstyle.wallet.repository.PaymentCallbackRepository;
 import com.innerstyle.wallet.repository.PaymentOrderRepository;
 import com.innerstyle.wallet.service.PaymentService;
@@ -32,12 +31,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Direct VNPay / MoMo payments. On a verified success we fulfil the order: SUBSCRIPTION activates
+ * Direct payOS payments. On a verified success we fulfil the order: SUBSCRIPTION activates
  * the plan (grants credits); PRINT marks the print order paid. Idempotent by order status.
  */
 @Slf4j
@@ -51,8 +51,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final CreditService creditService;
     private final PaymentOrderRepository paymentOrderRepository;
     private final PaymentCallbackRepository paymentCallbackRepository;
-    private final VnpayGateway vnpayGateway;
-    private final MomoGateway momoGateway;
+    private final PayosGateway payosGateway;
     private final PaymentProperties paymentProperties;
 
     @Override
@@ -84,43 +83,20 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public Map<String, String> handleVnpayIpn(Map<String, String> params) {
-        GatewayVerification v = vnpayGateway.verify(params);
+    public void handlePayosWebhook(Map<String, Object> payload) {
+        GatewayVerification v = payosGateway.verifyWebhook(payload);
         PaymentOrder order = lockOrder(v.orderCode());
-        recordCallback(order, PaymentProvider.VNPAY, params, v, PaymentCallbackKind.IPN);
+        recordCallback(order, PaymentProvider.PAYOS, payload, v, PaymentCallbackKind.IPN);
 
         if (!v.signatureValid()) {
-            return vnpResponse("97", "Invalid signature");
-        }
-        if (order == null) {
-            return vnpResponse("01", "Order not found");
-        }
-        if (v.amount() == null || order.getAmount().compareTo(v.amount()) != 0) {
-            return vnpResponse("04", "Invalid amount");
-        }
-        if (order.getStatus() == PaymentStatus.SUCCEEDED) {
-            return vnpResponse("02", "Order already confirmed");
-        }
-        settle(order, v);
-        return vnpResponse("00", "Confirm Success");
-    }
-
-    @Override
-    @Transactional
-    public void handleMomoIpn(Map<String, String> params) {
-        GatewayVerification v = momoGateway.verify(params);
-        PaymentOrder order = lockOrder(v.orderCode());
-        recordCallback(order, PaymentProvider.MOMO, params, v, PaymentCallbackKind.IPN);
-
-        if (!v.signatureValid()) {
-            log.warn("MoMo IPN signature mismatch for order {}", v.orderCode());
+            log.warn("payOS webhook signature mismatch for order {}", v.orderCode());
             return;
         }
         if (order == null || order.getStatus() == PaymentStatus.SUCCEEDED) {
             return;
         }
         if (v.amount() != null && order.getAmount().compareTo(v.amount()) != 0) {
-            log.warn("MoMo IPN amount mismatch for order {}", v.orderCode());
+            log.warn("payOS webhook amount mismatch for order {}", v.orderCode());
             return;
         }
         settle(order, v);
@@ -129,9 +105,7 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResultResponse confirmReturn(PaymentProvider provider, Map<String, String> params) {
-        GatewayVerification v = provider == PaymentProvider.VNPAY
-            ? vnpayGateway.verify(params)
-            : momoGateway.verify(params);
+        GatewayVerification v = payosGateway.verifyReturn(params);
         PaymentOrder order = lockOrder(v.orderCode());
         recordCallback(order, provider, params, v, PaymentCallbackKind.RETURN);
 
@@ -183,16 +157,11 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private PaymentInitResponse buildPayUrl(PaymentOrder order, String clientIp) {
-        String payUrl;
-        if (order.getProvider() == PaymentProvider.VNPAY) {
-            payUrl = vnpayGateway.buildPaymentUrl(order, clientIp);
-        } else {
-            payUrl = momoGateway.createPayment(order);
-            order.setStatus(PaymentStatus.PROCESSING);
-        }
+        PayosGateway.Checkout checkout = payosGateway.createPaymentLink(order);
+        order.setStatus(PaymentStatus.PROCESSING);
         paymentOrderRepository.save(order);
         return new PaymentInitResponse(order.getOrderCode(), order.getProvider().name(),
-            order.getAmount(), payUrl);
+            order.getAmount(), checkout.checkoutUrl(), checkout.qrCode());
     }
 
     /** Mark the order paid and fulfil what it funds. */
@@ -220,26 +189,24 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private void recordCallback(PaymentOrder order, PaymentProvider provider,
-                                Map<String, String> params, GatewayVerification v,
+                                Map<String, ?> params, GatewayVerification v,
                                 PaymentCallbackKind kind) {
         PaymentCallback callback = new PaymentCallback();
         callback.setPaymentOrderId(order == null ? null : order.getId());
         callback.setProvider(provider);
         callback.setKind(kind);
-        callback.setRawPayload(params);
+        callback.setRawPayload(new LinkedHashMap<>(params));
         callback.setSignatureValid(v.signatureValid());
         callback.setResponseCode(v.responseCode());
         paymentCallbackRepository.save(callback);
     }
 
-    private Map<String, String> vnpResponse(String code, String message) {
-        return Map.of("RspCode", code, "Message", message);
-    }
-
     private String generateOrderCode() {
+        // payOS requires a numeric orderCode. Millisecond timestamp * 1000 + a 3-digit
+        // tiebreaker keeps it well within a signed 64-bit long (and JS's safe-integer range).
         for (int i = 0; i < 5; i++) {
-            String code = "IS" + System.currentTimeMillis()
-                + String.format("%03d", ThreadLocalRandom.current().nextInt(1000));
+            String code = String.valueOf(System.currentTimeMillis() * 1000
+                + ThreadLocalRandom.current().nextInt(1000));
             if (paymentOrderRepository.findByOrderCode(code).isEmpty()) {
                 return code;
             }

@@ -10,7 +10,7 @@ references to it; this file is now self-contained.
 
 `com.innerstyle` — turns a 2D image/text prompt into a colored/posed/rigged/animated 3D
 model via the MeshyAI API, plus the surrounding product: auth, membership/credits, wallet
-payments (VNPay/MoMo), and paid 3D-print orders. See `README.md` for the domain walkthrough
+payments (payOS), and paid 3D-print orders. See `README.md` for the domain walkthrough
 and MeshyAI async flow (webhook + polling fallback).
 
 ## 2. Module map (package = feature, not layer-only)
@@ -32,8 +32,8 @@ com.innerstyle
 │   ├── controller/            # REST + /webhooks/meshy
 │   └── util/                  # SsrfGuard (validates outbound/callback URLs)
 ├── print/                   # paid 3D-print orders (figurine height/price tiers)
-├── wallet/                  # payment orders, VNPay/MoMo gateways, credit top-ups
-│   ├── gateway/               # CryptoSigner, GatewayVerification, VnpayGateway, MomoGateway
+├── wallet/                  # payment orders, payOS gateway, credit top-ups
+│   ├── gateway/               # CryptoSigner, GatewayVerification, PayosGateway
 │   └── seed/                  # startup data seeding
 └── redis/                   # cache, rate limiting (fail-open if Redis is down), security (token blocklist etc.)
 ```
@@ -130,13 +130,13 @@ package.
 - `@Service @RequiredArgsConstructor`, interface in `service/`, impl in `service/impl/`.
 - `@Transactional` on service methods (`readOnly = true` for reads); never open
   transactions in controllers or repositories.
-- External integrations (MeshyAI, VNPay, MoMo, Resend) go through a dedicated
+- External integrations (MeshyAI, payOS, Resend) go through a dedicated
   `client`/`gateway` package with their own DTOs — never call `RestClient`/HTTP directly
   from a controller or a domain service.
 - Outbound URLs supplied by users/webhooks (image URLs, callback URLs) MUST be validated
   with `meshy.util.SsrfGuard` (or an equivalent check) before being fetched — this is a
   known hardening point in this codebase, not optional.
-- Payment gateway callbacks (VNPay/MoMo IPN) must be signature-verified via
+- Payment gateway callbacks (payOS) must be signature-verified via
   `GatewayVerification`/`CryptoSigner` before any state change; treat these endpoints as
   hostile input.
 

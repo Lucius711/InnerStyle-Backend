@@ -68,7 +68,7 @@ Findings from the end-to-end QA + static-analysis pass. Severity per the tester 
 
 ## Verified-correct behaviours (no defect)
 These were audited and found correct; tests lock them in to prevent regressions:
-- Payment settlement is **not** performed on invalid signature or amount mismatch (VNPay/MoMo).
+- Payment settlement is **not** performed on invalid signature or amount mismatch (payOS/MoMo).
 - Payment fulfilment is **idempotent** by order status (no double credit/activation).
 - Print order amount is derived **server-side** from `PrintProperties`, never from the client.
 - Login does not leak account existence (same `auth.invalidCredentials` for unknown vs wrong pw).

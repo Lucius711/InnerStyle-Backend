@@ -21,7 +21,7 @@ public class SubscribeRequest {
     private String planCode;
 
     @NotNull(message = "1.provider.required")
-    @Pattern(regexp = "VNPAY|MOMO", message = "2.provider.invalid")
-    @Schema(example = "VNPAY", allowableValues = {"VNPAY", "MOMO"})
+    @Pattern(regexp = "PAYOS", message = "2.provider.invalid")
+    @Schema(example = "PAYOS", allowableValues = {"PAYOS"})
     private String provider;
 }

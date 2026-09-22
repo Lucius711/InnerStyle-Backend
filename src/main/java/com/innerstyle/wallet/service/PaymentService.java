@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Direct VNPay / MoMo payments funding a subscription or a print order (no virtual wallet).
+ * Direct payOS payments funding a subscription or a print order (no virtual wallet).
  */
 public interface PaymentService {
 
@@ -21,11 +21,8 @@ public interface PaymentService {
     PaymentInitResponse createPrintPayment(UUID userId, UUID printOrderId, BigDecimal amount,
                                            PaymentProvider provider, String clientIp);
 
-    /** Handle a VNPay IPN; returns the {RspCode, Message} body VNPay expects. */
-    Map<String, String> handleVnpayIpn(Map<String, String> params);
-
-    /** Handle a MoMo IPN. */
-    void handleMomoIpn(Map<String, String> params);
+    /** Handle a payOS webhook (server-to-server transaction notification). */
+    void handlePayosWebhook(Map<String, Object> payload);
 
     /** Confirm a browser-return (verify + apply, idempotent). */
     PaymentResultResponse confirmReturn(PaymentProvider provider, Map<String, String> params);

@@ -14,15 +14,11 @@ class CryptoSignerTest {
     private final CryptoSigner signer = new CryptoSigner();
 
     @Test
-    @DisplayName("HMAC-SHA256/512 are deterministic and lower-case hex")
+    @DisplayName("HMAC-SHA256 is deterministic and lower-case hex")
     void hmacIsDeterministic() {
-        String a256 = signer.hmacSha256Hex("secret", "data");
-        String b256 = signer.hmacSha256Hex("secret", "data");
-        assertThat(a256).isEqualTo(b256).isEqualTo(a256.toLowerCase());
-
-        String a512 = signer.hmacSha512Hex("secret", "data");
-        assertThat(signer.hmacSha512Hex("secret", "data")).isEqualTo(a512);
-        assertThat(a512).isNotEqualTo(a256);
+        String a = signer.hmacSha256Hex("secret", "data");
+        String b = signer.hmacSha256Hex("secret", "data");
+        assertThat(a).isEqualTo(b).isEqualTo(a.toLowerCase());
     }
 
     @Test

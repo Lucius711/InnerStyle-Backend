@@ -105,7 +105,7 @@ Bắt buộc đổi trước khi chạy production:
 | `JWT_SECRET` | chuỗi random ≥ 32 byte — `openssl rand -base64 48` |
 | `FRONTEND_BASE_URL` | `https://your-domain.com` (dùng cho link verify email / reset) |
 | `MESHY_API_KEY`, `MESHY_WEBHOOK_SECRET` | key MeshyAI thật |
-| `VNPAY_*`, `MOMO_*` | thông tin merchant; đổi `*_RETURN_URL` / `*_IPN_URL` sang domain thật (mục 9) |
+| `PAYOS_*` | thông tin merchant; đổi `*_RETURN_URL` / `*_CANCEL_URL` / `*_IPN_URL` sang domain thật (mục 9) |
 | `GOOGLE_CLIENT_ID`, `FACEBOOK_APP_ID` + `VITE_*` | nếu bật social login (giá trị Google/Facebook dùng chung backend & frontend) |
 
 > `.env.deploy.example` còn ghi `YOUR_EC2_PUBLIC_DNS` — thay hết bằng domain OVH của bạn.
@@ -184,16 +184,15 @@ docker compose up -d   # áp lại port mapping mới
 
 > Cách khác: thêm 1 container **Caddy** hoặc **Traefik** làm reverse proxy tự lo Let's Encrypt — hợp nếu muốn "all-in-docker".
 
-Sau khi có HTTPS: `FRONTEND_BASE_URL`, các `VNPAY_*`/`MOMO_*` URL đều dùng `https://...` rồi `docker compose up -d`.
+Sau khi có HTTPS: `FRONTEND_BASE_URL`, các `PAYOS_*` URL đều dùng `https://...` rồi `docker compose up -d`.
 
 ---
 
 ## 10. Callback cổng thanh toán
-VNPay / MoMo gọi thẳng vào server bạn — URL phải public (đã mở 80/443):
-- VNPay IPN: `https://<domain>/api/common/payments/vnpay/ipn`
-- MoMo IPN:  `https://<domain>/api/common/payments/momo/ipn`
+payOS gọi thẳng vào server bạn — URL phải public (đã mở 80/443):
+- payOS webhook: `https://<domain>/api/common/payments/payos/webhook`
 
-Đặt đúng các URL này trong dashboard VNPay/MoMo. **Bắt buộc HTTPS ở production.**
+Đặt đúng các URL này trong dashboard payOS. **Bắt buộc HTTPS ở production.**
 
 ---
 
@@ -238,7 +237,7 @@ Nên bật **Automated Backup / Snapshot** của OVH cho VPS + cron `pg_dump` h�
 - [ ] `JWT_SECRET`, `POSTGRES_PASSWORD` đã đổi, `.env` không commit.
 - [ ] `ufw` chỉ mở 22/80/443; 5432/6379/2207 không lộ.
 - [ ] HTTPS hoạt động; `FRONTEND_BASE_URL` + URL cổng thanh toán đều `https://`.
-- [ ] IPN VNPay/MoMo cấu hình đúng và gọi được từ internet.
+- [ ] Webhook payOS cấu hình đúng và gọi được từ internet.
 - [ ] Maps build-arg (nếu dùng) đã truyền; key Goong đã restrict domain.
 - [ ] Có backup: OVH snapshot + `pg_dump` định kỳ.
 - [ ] SMTP/Resend thật đã cấu hình; CORS đã siết.

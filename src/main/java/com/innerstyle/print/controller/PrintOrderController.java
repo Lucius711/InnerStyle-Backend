@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Authenticated 3D-print order endpoints ({@code /api/user/print/**}). Placing an order starts a
- * direct VNPay/MoMo payment and returns the gateway URL.
+ * direct payOS payment and returns the gateway URL.
  */
 @Tag(name = "3D Print")
 @SecurityRequirement(name = "bearer-jwt")
@@ -39,7 +39,7 @@ public class PrintOrderController {
 
     private final PrintOrderService printOrderService;
 
-    @Operation(summary = "Place a 3D-print order and start payment (VNPay/MoMo)")
+    @Operation(summary = "Place a 3D-print order and start payment (payOS)")
     @PostMapping("/orders")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<PrintOrderInitResponse> placeOrder(

@@ -50,7 +50,7 @@ public class PaymentCallback {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "raw_payload", columnDefinition = "jsonb", nullable = false)
-    private Map<String, String> rawPayload;
+    private Map<String, Object> rawPayload;
 
     @Column(name = "signature_valid", nullable = false)
     private boolean signatureValid;

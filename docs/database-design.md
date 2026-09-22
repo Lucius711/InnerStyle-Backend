@@ -86,7 +86,7 @@ Tiền không bị trừ ngay khi bắt đầu tạo 3D. Thay vào đó **giữ*
 |------|---------|
 | `mtb_pricing` | Đơn giá mỗi loại job 3D (`task_type` → `unit_price`) — quyết định số tiền giữ |
 | `dtb_wallets` | 1 ví / user: `available_balance` (tiêu được) + `held_balance` (đang giữ) + `version` (optimistic lock) |
-| `dtb_payment_orders` | Đơn nạp tiền qua **VNPAY/MOMO**: `order_code` idempotent, `status`, `provider_txn_ref` |
+| `dtb_payment_orders` | Đơn nạp tiền qua **PAYOS**: `order_code` idempotent, `status`, `provider_txn_ref` |
 | `dtb_payment_callbacks` | Log thô IPN/return từ cổng (audit + chống replay) |
 | `dtb_holds` | Bản ghi giữ tiền: `HELD → CAPTURED \| RELEASED \| EXPIRED`, `captured_amount ≤ amount` |
 | `dtb_wallet_transactions` | **Sổ cái bất biến** — mỗi thay đổi số dư = 1 dòng (`TOPUP/HOLD/CAPTURE/RELEASE/REFUND/ADJUSTMENT`), kèm `available_after`, `held_after` |
@@ -149,4 +149,4 @@ Hai cột để **NULL-able** vì migration Flyway là bất biến và bảng �
   `spring-boot-starter-mail`, `spring-boot-starter-validation` vào `pom.xml`.
 - Entity/Repository/Service/Controller cho từng module theo `rules/`.
 - Seeder profile-gated cho `mtb_categories`, `mtb_tags` (KHÔNG seed trong migration).
-- Tích hợp SDK/redirect VNPay & MoMo (ký checksum, verify IPN).
+- Tích hợp SDK/redirect payOS (ký checksum, verify webhook).

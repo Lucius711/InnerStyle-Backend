@@ -42,7 +42,7 @@ public class MembershipController {
         return ApiResponse.success("membership.me", membershipService.getMyMembership(principal.getId()));
     }
 
-    @Operation(summary = "Buy / upgrade a plan (starts a VNPay/MoMo payment)")
+    @Operation(summary = "Buy / upgrade a plan (starts a payOS payment)")
     @PostMapping("/subscribe")
     public ApiResponse<PaymentInitResponse> subscribe(
             @AuthenticationPrincipal UserPrincipal principal,

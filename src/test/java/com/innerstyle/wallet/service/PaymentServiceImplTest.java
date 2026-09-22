@@ -14,8 +14,7 @@ import com.innerstyle.wallet.entity.enums.PaymentProvider;
 import com.innerstyle.wallet.entity.enums.PaymentPurpose;
 import com.innerstyle.wallet.entity.enums.PaymentStatus;
 import com.innerstyle.wallet.gateway.GatewayVerification;
-import com.innerstyle.wallet.gateway.MomoGateway;
-import com.innerstyle.wallet.gateway.VnpayGateway;
+import com.innerstyle.wallet.gateway.PayosGateway;
 import com.innerstyle.wallet.repository.PaymentCallbackRepository;
 import com.innerstyle.wallet.repository.PaymentOrderRepository;
 import com.innerstyle.wallet.service.impl.PaymentServiceImpl;
@@ -49,8 +48,7 @@ class PaymentServiceImplTest {
     private CreditService creditService;
     private PaymentOrderRepository paymentOrderRepository;
     private PaymentCallbackRepository paymentCallbackRepository;
-    private VnpayGateway vnpayGateway;
-    private MomoGateway momoGateway;
+    private PayosGateway payosGateway;
     private PaymentServiceImpl service;
 
     @BeforeEach
@@ -60,16 +58,15 @@ class PaymentServiceImplTest {
         creditService = mock(CreditService.class);
         paymentOrderRepository = mock(PaymentOrderRepository.class);
         paymentCallbackRepository = mock(PaymentCallbackRepository.class);
-        vnpayGateway = mock(VnpayGateway.class);
-        momoGateway = mock(MomoGateway.class);
+        payosGateway = mock(PayosGateway.class);
         service = new PaymentServiceImpl(userRepository, mock(MembershipPlanRepository.class),
             printOrderRepository, creditService, paymentOrderRepository, paymentCallbackRepository,
-            vnpayGateway, momoGateway, mock(PaymentProperties.class));
+            payosGateway, mock(PaymentProperties.class));
     }
 
     private PaymentOrder subscriptionOrder(PaymentStatus status) {
         PaymentOrder o = new PaymentOrder();
-        o.setOrderCode("IS123");
+        o.setOrderCode("123456");
         o.setAmount(new BigDecimal("100000"));
         o.setStatus(status);
         o.setPurpose(PaymentPurpose.SUBSCRIPTION);
@@ -80,66 +77,74 @@ class PaymentServiceImplTest {
     }
 
     private GatewayVerification verification(boolean sig, boolean success, BigDecimal amount) {
-        return new GatewayVerification(sig, success, "IS123", amount, "TXN1", "00");
+        return new GatewayVerification(sig, success, "123456", amount, "TXN1", "00");
     }
 
-    // ------------------------------------------------------------------ VNPay IPN
+    // ------------------------------------------------------------------ payOS webhook
 
     @Test
-    @DisplayName("VNPay IPN: invalid signature → RspCode 97, never settled")
-    void vnpayIpn_badSignature() {
-        when(vnpayGateway.verify(anyMap()))
+    @DisplayName("payOS webhook: invalid signature → never settled")
+    void payosWebhook_badSignature_noSettle() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(false, true, new BigDecimal("100000")));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
 
-        Map<String, String> res = service.handleVnpayIpn(Map.of());
+        service.handlePayosWebhook(Map.of());
 
-        assertThat(res.get("RspCode")).isEqualTo("97");
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
         verify(creditService, never()).activatePlan(any(), any());
     }
 
     @Test
-    @DisplayName("VNPay IPN: unknown order → RspCode 01")
-    void vnpayIpn_unknownOrder() {
-        when(vnpayGateway.verify(anyMap()))
+    @DisplayName("payOS webhook: unknown order → no-op, no exception")
+    void payosWebhook_unknownOrder() {
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.empty());
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.empty());
 
-        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("01");
+        service.handlePayosWebhook(Map.of());
+
+        verify(creditService, never()).activatePlan(any(), any());
     }
 
     @Test
-    @DisplayName("VNPay IPN: amount mismatch → RspCode 04, never settled")
-    void vnpayIpn_amountMismatch() {
-        when(vnpayGateway.verify(anyMap()))
+    @DisplayName("payOS webhook: amount mismatch → never settled")
+    void payosWebhook_amountMismatch_noSettle() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("50000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
-            .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.PENDING)));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
 
-        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("04");
+        service.handlePayosWebhook(Map.of());
+
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
         verify(creditService, never()).activatePlan(any(), any());
     }
 
     @Test
-    @DisplayName("VNPay IPN: already succeeded → RspCode 02 (idempotent)")
-    void vnpayIpn_alreadyConfirmed() {
-        when(vnpayGateway.verify(anyMap()))
+    @DisplayName("payOS webhook: already succeeded → idempotent, not re-credited")
+    void payosWebhook_alreadyConfirmed() {
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
 
-        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("02");
+        service.handlePayosWebhook(Map.of());
+
         verify(creditService, never()).activatePlan(any(), any());
     }
 
     @Test
-    @DisplayName("VNPay IPN: valid success → RspCode 00, SUBSCRIPTION activates plan")
-    void vnpayIpn_success_activatesPlan() {
+    @DisplayName("payOS webhook: valid success → SUBSCRIPTION activates plan")
+    void payosWebhook_success_activatesPlan() {
         PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
-        when(vnpayGateway.verify(anyMap()))
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
 
-        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("00");
+        service.handlePayosWebhook(Map.of());
+
         assertThat(order.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
         verify(creditService).activatePlan(any(), eq("PRO"));
     }
@@ -150,11 +155,11 @@ class PaymentServiceImplTest {
     @DisplayName("Return: valid success → SUCCESS, credited=true, plan activated")
     void return_success_credited() {
         PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
-        when(vnpayGateway.verify(anyMap()))
+        when(payosGateway.verifyReturn(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
 
-        PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
+        PaymentResultResponse res = service.confirmReturn(PaymentProvider.PAYOS, Map.of());
 
         assertThat(res.status()).isEqualTo("SUCCESS");
         assertThat(res.credited()).isTrue();
@@ -164,12 +169,12 @@ class PaymentServiceImplTest {
     @Test
     @DisplayName("Return: already succeeded → SUCCESS but credited=false (idempotent)")
     void return_alreadySucceeded_notReCredited() {
-        when(vnpayGateway.verify(anyMap()))
+        when(payosGateway.verifyReturn(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
 
-        PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
+        PaymentResultResponse res = service.confirmReturn(PaymentProvider.PAYOS, Map.of());
 
         assertThat(res.status()).isEqualTo("SUCCESS");
         assertThat(res.credited()).isFalse();
@@ -179,79 +184,22 @@ class PaymentServiceImplTest {
     @Test
     @DisplayName("Return: bad signature → FAILED, not credited")
     void return_badSignature_failed() {
-        when(vnpayGateway.verify(anyMap()))
+        when(payosGateway.verifyReturn(anyMap()))
             .thenReturn(verification(false, false, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456"))
             .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.PENDING)));
 
-        PaymentResultResponse res = service.confirmReturn(PaymentProvider.VNPAY, Map.of());
+        PaymentResultResponse res = service.confirmReturn(PaymentProvider.PAYOS, Map.of());
 
         assertThat(res.status()).isEqualTo("FAILED");
         assertThat(res.credited()).isFalse();
     }
 
-    // ------------------------------------------------------------------ MoMo IPN
-
-    @Test
-    @DisplayName("MoMo IPN: valid success → SUBSCRIPTION activates plan")
-    void momoIpn_success_activatesPlan() {
-        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
-        when(momoGateway.verify(anyMap()))
-            .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
-
-        service.handleMomoIpn(Map.of());
-
-        assertThat(order.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
-        verify(creditService).activatePlan(any(), eq("PRO"));
-    }
-
-    @Test
-    @DisplayName("MoMo IPN: invalid signature → never settled")
-    void momoIpn_badSignature_noSettle() {
-        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
-        when(momoGateway.verify(anyMap()))
-            .thenReturn(verification(false, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
-
-        service.handleMomoIpn(Map.of());
-
-        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
-        verify(creditService, never()).activatePlan(any(), any());
-    }
-
-    @Test
-    @DisplayName("MoMo IPN: already succeeded → idempotent, not re-credited")
-    void momoIpn_alreadySucceeded_notReCredited() {
-        when(momoGateway.verify(anyMap()))
-            .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123"))
-            .thenReturn(Optional.of(subscriptionOrder(PaymentStatus.SUCCEEDED)));
-
-        service.handleMomoIpn(Map.of());
-
-        verify(creditService, never()).activatePlan(any(), any());
-    }
-
-    @Test
-    @DisplayName("MoMo IPN: amount mismatch → never settled")
-    void momoIpn_amountMismatch_noSettle() {
-        PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
-        when(momoGateway.verify(anyMap()))
-            .thenReturn(verification(true, true, new BigDecimal("50000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
-
-        service.handleMomoIpn(Map.of());
-
-        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
-        verify(creditService, never()).activatePlan(any(), any());
-    }
-
     // ------------------------------------------------------------------ PRINT fulfilment
 
     @Test
-    @DisplayName("VNPay IPN: PRINT purpose success → print order marked PAID")
-    void vnpayIpn_printPurpose_marksPrintOrderPaid() {
+    @DisplayName("payOS webhook: PRINT purpose success → print order marked PAID")
+    void payosWebhook_printPurpose_marksPrintOrderPaid() {
         UUID printOrderId = UUID.randomUUID();
         PaymentOrder order = subscriptionOrder(PaymentStatus.PENDING);
         order.setPurpose(PaymentPurpose.PRINT);
@@ -260,12 +208,13 @@ class PaymentServiceImplTest {
         PrintOrder printOrder = new PrintOrder();
         printOrder.setStatus(PrintOrderStatus.PENDING);
 
-        when(vnpayGateway.verify(anyMap()))
+        when(payosGateway.verifyWebhook(anyMap()))
             .thenReturn(verification(true, true, new BigDecimal("100000")));
-        when(paymentOrderRepository.findByOrderCodeForUpdate("IS123")).thenReturn(Optional.of(order));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
         when(printOrderRepository.findById(printOrderId)).thenReturn(Optional.of(printOrder));
 
-        assertThat(service.handleVnpayIpn(Map.of()).get("RspCode")).isEqualTo("00");
+        service.handlePayosWebhook(Map.of());
+
         assertThat(printOrder.getStatus()).isEqualTo(PrintOrderStatus.PAID);
         verify(printOrderRepository).save(printOrder);
         verify(creditService, never()).activatePlan(any(), any());
