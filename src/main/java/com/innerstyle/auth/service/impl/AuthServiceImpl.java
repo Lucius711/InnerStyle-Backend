@@ -21,6 +21,9 @@ import com.innerstyle.auth.service.social.SocialTokenVerifier;
 import com.innerstyle.auth.service.social.SocialUserInfo;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
+import com.innerstyle.redis.RedisKeys;
+import com.innerstyle.redis.config.RateLimitProperties;
+import com.innerstyle.redis.ratelimit.RateLimiterService;
 import com.innerstyle.redis.security.TokenBlacklist;
 import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +56,9 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
     private final TokenBlacklist tokenBlacklist;
+    private final RateLimiterService rateLimiterService;
+    private final RateLimitProperties rateLimitProperties;
+    private final RedisKeys redisKeys;
     private final Map<OauthProvider, SocialTokenVerifier> verifiers = new EnumMap<>(OauthProvider.class);
 
     public AuthServiceImpl(UserRepository userRepository, RoleRepository roleRepository,
@@ -61,6 +67,8 @@ public class AuthServiceImpl implements AuthService {
                            JwtService jwtService, JwtProperties jwtProperties,
                            RefreshTokenService refreshTokenService, UserMapper userMapper,
                            TokenBlacklist tokenBlacklist,
+                           RateLimiterService rateLimiterService, RateLimitProperties rateLimitProperties,
+                           RedisKeys redisKeys,
                            List<SocialTokenVerifier> socialVerifiers) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
@@ -71,6 +79,9 @@ public class AuthServiceImpl implements AuthService {
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
         this.tokenBlacklist = tokenBlacklist;
+        this.rateLimiterService = rateLimiterService;
+        this.rateLimitProperties = rateLimitProperties;
+        this.redisKeys = redisKeys;
         socialVerifiers.forEach(v -> this.verifiers.put(v.provider(), v));
     }
 
@@ -120,7 +131,7 @@ public class AuthServiceImpl implements AuthService {
         User user = oauthAccountRepository
             .findByProviderAndProviderUserId(provider, info.providerUserId())
             .map(OauthAccount::getUser)
-            .orElseGet(() -> linkOrCreate(provider, info));
+            .orElseGet(() -> linkOrCreate(provider, info, ip));
 
         user.setLastLoginAt(Instant.now());
         userRepository.save(user);
@@ -138,10 +149,20 @@ public class AuthServiceImpl implements AuthService {
 
     // --------------------------------------------------------------------- helpers
 
-    private User linkOrCreate(OauthProvider provider, SocialUserInfo info) {
+    private User linkOrCreate(OauthProvider provider, SocialUserInfo info, String ip) {
         User user = (info.email() == null ? null
             : userRepository.findByEmailIgnoreCase(info.email()).orElse(null));
         if (user == null) {
+            // Every new account starts on the free plan (membership.CreditServiceImpl grants it on
+            // first touch) — cap new-account creation per IP so one person can't script up unlimited
+            // free credit by farming Google accounts. Fail-closed: a Redis outage blocks new
+            // signups rather than silently opening the abuse door.
+            RateLimiterService.Decision decision = rateLimiterService.check(
+                redisKeys.rateLimit("newAccount", ip), rateLimitProperties.registerPerHour(),
+                Duration.ofHours(1).toMillis(), true);
+            if (!decision.allowed()) {
+                throw new BadRequestException("auth.social.tooManyNewAccounts");
+            }
             Role userRole = roleRepository.findByCode(ROLE_USER)
                 .orElseThrow(() -> new IllegalStateException("Seed role USER missing"));
             user = new User();

@@ -20,6 +20,9 @@ import com.innerstyle.auth.service.social.SocialTokenVerifier;
 import com.innerstyle.auth.service.social.SocialUserInfo;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
+import com.innerstyle.redis.RedisKeys;
+import com.innerstyle.redis.config.RateLimitProperties;
+import com.innerstyle.redis.ratelimit.RateLimiterService;
 import com.innerstyle.redis.security.TokenBlacklist;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +38,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -58,6 +64,7 @@ class AuthServiceImplTest {
     private RefreshTokenService refreshTokenService;
     private UserMapper userMapper;
     private TokenBlacklist tokenBlacklist;
+    private RateLimiterService rateLimiterService;
     private SocialTokenVerifier googleVerifier;
     private AuthServiceImpl service;
 
@@ -65,6 +72,11 @@ class AuthServiceImplTest {
     private final JwtProperties jwtProperties = new JwtProperties(
         "test-secret-key-that-is-at-least-32-bytes-long!!", "innerstyle",
         Duration.ofMinutes(15), Duration.ofDays(7));
+
+    // Real records (nothing to mock): rate-limit config + key namespacer.
+    private final RateLimitProperties rateLimitProperties =
+        new RateLimitProperties(true, 120, 5, 5, 3, 10, 5);
+    private final RedisKeys redisKeys = new RedisKeys("test");
 
     @BeforeEach
     void setUp() {
@@ -76,13 +88,18 @@ class AuthServiceImplTest {
         refreshTokenService = mock(RefreshTokenService.class);
         userMapper = mock(UserMapper.class);
         tokenBlacklist = mock(TokenBlacklist.class);
+        rateLimiterService = mock(RateLimiterService.class);
+        // Allowed by default — tests exercising the new-account cap override this explicitly.
+        when(rateLimiterService.check(any(), anyInt(), anyLong(), anyBoolean()))
+            .thenReturn(new RateLimiterService.Decision(true, 999, 0));
 
         googleVerifier = mock(SocialTokenVerifier.class);
         when(googleVerifier.provider()).thenReturn(OauthProvider.GOOGLE);
 
         service = new AuthServiceImpl(userRepository, roleRepository, oauthAccountRepository,
             loginAuditRepository, jwtService, jwtProperties, refreshTokenService,
-            userMapper, tokenBlacklist, List.of(googleVerifier));
+            userMapper, tokenBlacklist, rateLimiterService, rateLimitProperties, redisKeys,
+            List.of(googleVerifier));
     }
 
     // ------------------------------------------------------------------ socialLogin
@@ -150,6 +167,26 @@ class AuthServiceImplTest {
         verify(oauthAccountRepository).save(accCap.capture());
         assertThat(accCap.getValue().getProvider()).isEqualTo(OauthProvider.GOOGLE);
         assertThat(accCap.getValue().getProviderUserId()).isEqualTo("g-999");
+    }
+
+    @Test
+    @DisplayName("socialLogin: no account + new-account cap hit for this IP → BadRequestException, nothing created")
+    void socialLogin_newUser_rateLimited_throwsAndCreatesNothing() {
+        SocialUserInfo info = new SocialUserInfo(OauthProvider.GOOGLE, "g-999",
+            "new@example.com", "New User", "http://cdn/x.png");
+
+        when(googleVerifier.verify("token")).thenReturn(info);
+        when(oauthAccountRepository.findByProviderAndProviderUserId(OauthProvider.GOOGLE, "g-999"))
+            .thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCase("new@example.com")).thenReturn(Optional.empty());
+        when(rateLimiterService.check(any(), anyInt(), anyLong(), anyBoolean()))
+            .thenReturn(new RateLimiterService.Decision(false, 0, 3600));
+
+        assertThatThrownBy(() -> service.socialLogin(OauthProvider.GOOGLE, "token", "1.2.3.4", "UA"))
+            .isInstanceOf(BadRequestException.class);
+
+        verify(userRepository, never()).save(any());
+        verify(oauthAccountRepository, never()).save(any());
     }
 
     @Test
