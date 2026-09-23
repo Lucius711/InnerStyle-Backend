@@ -8,15 +8,13 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
-import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Cached texture-map bytes for a task, stored out-of-line from {@link MeshyTask}.
+ * Cached texture-map bytes for a task, bytes stored in Cloudflare R2 (row = key + metadata).
  *
  * <p>Meshy hosts texture images (base color, metallic, normal, ...) on its CDN behind
  * <b>presigned URLs that expire</b>. The same-origin texture proxy re-fetches that URL on every
@@ -57,9 +55,9 @@ public class MeshyTaskTexture {
     @Column(nullable = false, length = 8)
     private String ext;
 
-    @JdbcTypeCode(SqlTypes.VARBINARY)
-    @Column(columnDefinition = "bytea", nullable = false)
-    private byte[] data;
+    /** Object key of the bytes in R2 (see {@code ObjectStorageService}). */
+    @Column(name = "storage_key", nullable = false)
+    private String storageKey;
 
     @Column(nullable = false)
     private long size;

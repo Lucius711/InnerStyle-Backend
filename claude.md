@@ -35,7 +35,8 @@ com.innerstyle
 ├── wallet/                  # payment orders, payOS gateway, credit top-ups
 │   ├── gateway/               # CryptoSigner, GatewayVerification, PayosGateway
 │   └── seed/                  # startup data seeding
-└── redis/                   # cache, rate limiting (fail-open if Redis is down), security (token blocklist etc.)
+├── redis/                   # cache, rate limiting (fail-open if Redis is down), security (token blocklist etc.)
+└── storage/                 # Cloudflare R2 (S3 API): 3D models/USDZ/textures/thumbnails — DB keeps only storage_key + metadata
 ```
 
 Each feature package is internally layered: `controller / service (+ impl) / repository /

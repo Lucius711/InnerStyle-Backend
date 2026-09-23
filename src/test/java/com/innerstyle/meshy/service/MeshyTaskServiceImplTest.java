@@ -20,6 +20,7 @@ import com.innerstyle.meshy.repository.MeshyTaskThumbnailRepository;
 import com.innerstyle.meshy.repository.MeshyTaskTextureRepository;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
 import com.innerstyle.meshy.service.impl.MeshyTaskServiceImpl;
+import com.innerstyle.storage.service.ObjectStorageService;
 import com.innerstyle.membership.service.CreditService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +58,7 @@ class MeshyTaskServiceImplTest {
     @Mock private CreditService creditService;
     @Mock private ContentModeration contentModeration;
     @Mock private MeshToolRunner meshToolRunner;
+    @Mock private ObjectStorageService objectStorage;
 
     private MeshyTaskServiceImpl service;
 
@@ -67,7 +69,7 @@ class MeshyTaskServiceImplTest {
             new MeshyProperties.Poll(true, 15000L, 25));
         service = new MeshyTaskServiceImpl(meshyClient, taskRepository, assetRepository, usdzRepository,
             thumbnailRepository, textureRepository, taskMapper, props, creditService, contentModeration,
-            meshToolRunner);
+            meshToolRunner, objectStorage);
 
         // Authenticate a user so billing (beginBilling -> currentUserIdOrThrow) can run.
         var principal = UserPrincipal.fromClaims(UUID.randomUUID(), "tester@example.com",
@@ -164,9 +166,10 @@ class MeshyTaskServiceImplTest {
 
         var cached = new com.innerstyle.meshy.entity.MeshyTaskUsdz();
         cached.setTaskId(id);
-        cached.setData(new byte[] {1, 2, 3});
+        cached.setStorageKey("tasks/" + id + "/usdz/a.usdz");
         cached.setSize(3);
         when(usdzRepository.findById(id)).thenReturn(Optional.of(cached));
+        when(objectStorage.get("tasks/" + id + "/usdz/a.usdz")).thenReturn(new byte[] {1, 2, 3});
 
         var result = service.fetchModel(id, "usdz");
 
@@ -197,6 +200,8 @@ class MeshyTaskServiceImplTest {
         task.setUserId(owner);
         when(taskRepository.findById(id)).thenReturn(Optional.of(task));
         when(usdzRepository.findById(id)).thenReturn(Optional.empty());
+        when(objectStorage.put("tasks/" + id + "/usdz", "usdz", new byte[] {9, 8, 7, 6}, "model/vnd.usdz+zip"))
+            .thenReturn("tasks/" + id + "/usdz/new.usdz");
 
         service.storeUsdz(id, owner, new byte[] {9, 8, 7, 6});
 
@@ -205,7 +210,7 @@ class MeshyTaskServiceImplTest {
         org.mockito.Mockito.verify(usdzRepository).save(captor.capture());
         assertThat(captor.getValue().getTaskId()).isEqualTo(id);
         assertThat(captor.getValue().getSize()).isEqualTo(4);
-        assertThat(captor.getValue().getData()).containsExactly(9, 8, 7, 6);
+        assertThat(captor.getValue().getStorageKey()).isEqualTo("tasks/" + id + "/usdz/new.usdz");
     }
 
     @Test

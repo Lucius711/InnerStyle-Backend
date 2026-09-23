@@ -7,16 +7,14 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
-import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Authoritative local model bytes for a task, stored out-of-line from {@link MeshyTask} so the
- * (potentially several-MB) blob is never loaded by ordinary task queries. Used for:
+ * Authoritative local model for a task. The bytes live in Cloudflare R2; this row only keeps the
+ * object key + metadata. Used for:
  * <ul>
  *   <li>user-uploaded 3D files (no Meshy hosting), and</li>
  *   <li>models edited in place (e.g. a custom base added) — the edited mesh is persisted here
@@ -43,9 +41,9 @@ public class MeshyTaskAsset {
     @Column(name = "content_type", nullable = false, length = 64)
     private String contentType;
 
-    @JdbcTypeCode(SqlTypes.VARBINARY)
-    @Column(columnDefinition = "bytea", nullable = false)
-    private byte[] data;
+    /** Object key of the bytes in R2 (see {@code ObjectStorageService}). */
+    @Column(name = "storage_key", nullable = false)
+    private String storageKey;
 
     @Column(nullable = false)
     private long size;
@@ -64,9 +62,9 @@ public class MeshyTaskAsset {
     @Column(name = "original_content_type", length = 64)
     private String originalContentType;
 
-    @JdbcTypeCode(SqlTypes.VARBINARY)
-    @Column(name = "original_data", columnDefinition = "bytea")
-    private byte[] originalData;
+    /** Object key of the pristine backup in R2; null until the first repair. */
+    @Column(name = "original_storage_key")
+    private String originalStorageKey;
 
     @Column(name = "original_size")
     private Long originalSize;

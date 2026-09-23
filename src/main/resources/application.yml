@@ -111,6 +111,20 @@ app:
       return-url: ${PAYOS_RETURN_URL:http://localhost:5173/wallet/payos-return}
       cancel-url: ${PAYOS_CANCEL_URL:http://localhost:5173/wallet/payos-return}
 
+  # --- Object storage: Cloudflare R2 (S3-compatible) ---
+  # Large binaries (GLB/USDZ models, texture maps, thumbnails) live in the bucket; PostgreSQL keeps
+  # only the object key + metadata. Endpoint: https://<account-id>.r2.cloudflarestorage.com
+  storage:
+    r2:
+      endpoint: ${R2_ENDPOINT:https://account-id.r2.cloudflarestorage.com}
+      access-key-id: ${R2_ACCESS_KEY_ID:}
+      secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+      bucket: ${R2_BUCKET:innerstyle-assets}
+    # Copy legacy BYTEA blobs (pre-R2 rows) into R2 on startup; idempotent, safe to leave on.
+    backfill:
+      enabled: ${R2_BACKFILL_ENABLED:true}
+      batch-size: 20
+
   # --- Redis-backed cache + rate limiting (fail-open if Redis is unavailable) ---
   redis:
     key-prefix: ${REDIS_KEY_PREFIX:is:dev}

@@ -54,7 +54,9 @@ import com.innerstyle.meshy.service.ContentModeration;
 import com.innerstyle.meshy.service.MeshToolRunner;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.meshy.util.MeshTransformer;
+import com.innerstyle.meshy.util.MeshyStorageKeys;
 import com.innerstyle.meshy.util.SsrfGuard;
+import com.innerstyle.storage.service.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -105,6 +107,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final CreditService creditService;
     private final ContentModeration contentModeration;
     private final MeshToolRunner meshToolRunner;
+    private final ObjectStorageService objectStorage;
 
     private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
 
@@ -505,7 +508,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         byte[] model;
         String inExt;
         if (existing.isPresent()) {
-            model = existing.get().getData();
+            model = objectStorage.get(existing.get().getStorageKey());
             inExt = existing.get().getFormat();
         } else {
             model = downloadModel(task, "glb").bytes();
@@ -556,7 +559,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (existing.isEmpty()) {
             throw new BadRequestException("meshy.base.none");
         }
-        byte[] stripped = meshToolRunner.stripBase(existing.get().getData(),
+        byte[] stripped = meshToolRunner.stripBase(objectStorage.get(existing.get().getStorageKey()),
                 existing.get().getFormat(), baseColorTextureBytes(task));
 
         // Persist the base-less model in place (also drops any cached USDZ so AR
@@ -597,9 +600,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      * rebuilt on demand.
      */
     private void invalidateUsdz(UUID taskId) {
-        if (usdzRepository.existsById(taskId)) {
-            usdzRepository.deleteById(taskId);
-        }
+        usdzRepository.findById(taskId).ifPresent(usdz -> {
+            objectStorage.deleteAfterCommit(usdz.getStorageKey());
+            usdzRepository.delete(usdz);
+        });
     }
 
     @Override
@@ -624,7 +628,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         byte[] model;
         String inExt;
         if (existing.isPresent()) {
-            model = existing.get().getData();
+            model = objectStorage.get(existing.get().getStorageKey());
             inExt = existing.get().getFormat();
         } else {
             model = downloadModel(task, "glb").bytes();
@@ -661,21 +665,24 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public com.innerstyle.meshy.dto.response.RepairResponse revertToOriginal(UUID taskId) {
         MeshyTask task = getTaskOrThrow(taskId);
         MeshyTaskAsset asset = assetRepository.findById(taskId)
-            .filter(a -> a.getOriginalData() != null)
+            .filter(a -> a.getOriginalStorageKey() != null)
             .orElseThrow(() -> new BadRequestException("meshy.task.noOriginalBackup"));
+        byte[] current = objectStorage.get(asset.getStorageKey());
+        byte[] original = objectStorage.get(asset.getOriginalStorageKey());
+        String originalFormat = asset.getOriginalFormat();
 
         com.innerstyle.meshy.dto.response.PrintabilityResponse before =
-            meshToolRunner.analyze(asset.getData(), asset.getFormat());
+            meshToolRunner.analyze(current, asset.getFormat());
 
         // Restore the backed-up bytes as the current model; the backup itself is kept, so
         // reverting is not one-shot — the user can re-repair and revert again freely.
-        storeAsset(taskId, asset.getOriginalData(), asset.getOriginalFormat());
+        storeAsset(taskId, original, originalFormat);
         pointModelAtAsset(task);
         invalidateUsdz(taskId);
         MeshyTaskResponse updated = persistAndMap(task);
 
         com.innerstyle.meshy.dto.response.PrintabilityResponse after =
-            meshToolRunner.analyze(asset.getOriginalData(), asset.getOriginalFormat());
+            meshToolRunner.analyze(original, originalFormat);
         return new com.innerstyle.meshy.dto.response.RepairResponse(before, after, updated, true);
     }
 
@@ -749,7 +756,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         Optional<MeshyTaskAsset> asset = assetRepository.findById(id);
         if (asset.isPresent()) {
             MeshyTaskAsset a = asset.get();
-            return new MeshyTaskService.ModelData(a.getData(), a.getContentType(), "model." + a.getFormat());
+            return new MeshyTaskService.ModelData(objectStorage.get(a.getStorageKey()), a.getContentType(),
+                    "model." + a.getFormat());
         }
         return downloadModel(task, fmt);
     }
@@ -762,7 +770,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         Optional<MeshyTaskUsdz> cached = usdzRepository.findById(task.getId());
         if (cached.isPresent()) {
             return new MeshyTaskService.ModelData(
-                    cached.get().getData(), "model/vnd.usdz+zip", "model.usdz");
+                    objectStorage.get(cached.get().getStorageKey()), MeshyStorageKeys.USDZ_CONTENT_TYPE,
+                    "model.usdz");
         }
         Map<String, String> models = task.getModelUrls();
         if (models != null && models.get("usdz") != null) {
@@ -785,8 +794,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         MeshyTaskUsdz usdz = usdzRepository.findById(task.getId()).orElseGet(MeshyTaskUsdz::new);
+        objectStorage.deleteAfterCommit(usdz.getStorageKey());
         usdz.setTaskId(task.getId());
-        usdz.setData(data);
+        usdz.setStorageKey(objectStorage.put(MeshyStorageKeys.usdz(task.getId()), MeshyStorageKeys.USDZ_EXT, data,
+                MeshyStorageKeys.USDZ_CONTENT_TYPE));
         usdz.setSize(data.length);
         usdzRepository.save(usdz);
     }
@@ -801,12 +812,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
-        MeshyTaskThumbnail thumb = thumbnailRepository.findById(task.getId())
-                .orElseGet(MeshyTaskThumbnail::new);
-        thumb.setTaskId(task.getId());
-        thumb.setData(data);
-        thumb.setSize(data.length);
-        thumbnailRepository.save(thumb);
+        saveThumbnail(task.getId(), data);
         // Point the task at our stored image so listings/detail show the edited model.
         task.setThumbnailUrl(selfThumbnailUrl(task.getId()));
         taskRepository.save(task);
@@ -816,7 +822,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public byte[] fetchThumbnailImage(UUID id) {
         byte[] cached = thumbnailRepository.findById(id)
-                .map(MeshyTaskThumbnail::getData)
+                .map(MeshyTaskThumbnail::getStorageKey)
+                .map(objectStorage::get)
                 .orElse(null);
         if (cached != null && cached.length > 0) {
             return cached;
@@ -852,11 +859,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (bytes == null || bytes.length == 0) {
             return null;
         }
-        MeshyTaskThumbnail thumb = thumbnailRepository.findById(id).orElseGet(MeshyTaskThumbnail::new);
-        thumb.setTaskId(id);
-        thumb.setData(bytes);
-        thumb.setSize(bytes.length);
-        thumbnailRepository.save(thumb);
+        saveThumbnail(id, bytes);
         // If we re-fetched from Meshy and the task's stored URL is still an expiring
         // CDN link,
         // point it at our own proxy now so subsequent webhooks/polls don't overwrite
@@ -887,12 +890,19 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (bytes == null || bytes.length == 0) {
             return false;
         }
+        saveThumbnail(taskId, bytes);
+        return true;
+    }
+
+    /** Upload a task's preview image to R2 and point its thumbnail row at it (old object dropped). */
+    private void saveThumbnail(UUID taskId, byte[] bytes) {
         MeshyTaskThumbnail thumb = thumbnailRepository.findById(taskId).orElseGet(MeshyTaskThumbnail::new);
+        objectStorage.deleteAfterCommit(thumb.getStorageKey());
         thumb.setTaskId(taskId);
-        thumb.setData(bytes);
+        thumb.setStorageKey(objectStorage.put(MeshyStorageKeys.thumbnail(taskId), MeshyStorageKeys.THUMBNAIL_EXT,
+                bytes, MeshyStorageKeys.THUMBNAIL_CONTENT_TYPE));
         thumb.setSize(bytes.length);
         thumbnailRepository.save(thumb);
-        return true;
     }
 
     /**
@@ -963,9 +973,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         MeshyTaskTexture cached = textureRepository
                 .findById(new MeshyTaskTextureId(id, key))
                 .orElse(null);
+        if (cached != null && cached.getStorageKey() == null) {
+            cached = null; // legacy row not yet copied to R2 — treat as a cache miss
+        }
         if (cached != null && cached.getSourceKey().equals(sourceKey)) {
             return new MeshyTaskService.ModelData(
-                    cached.getData(), cached.getContentType(), "texture." + cached.getExt());
+                    objectStorage.get(cached.getStorageKey()), cached.getContentType(), "texture." + cached.getExt());
         }
 
         byte[] bytes = tryFetchBytes(url);
@@ -975,8 +988,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             // rather than letting the viewer fall back to a grey, un-textured model.
             if (cached != null) {
                 log.warn("Texture fetch failed for task {} map {}; serving stale cache", id, key);
-                return new MeshyTaskService.ModelData(
-                        cached.getData(), cached.getContentType(), "texture." + cached.getExt());
+                return new MeshyTaskService.ModelData(objectStorage.get(cached.getStorageKey()),
+                        cached.getContentType(), "texture." + cached.getExt());
             }
             throw new UpstreamServiceException("meshy.upstreamError");
         }
@@ -993,12 +1006,13 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         MeshyTaskTexture texture = textureRepository
                 .findById(new MeshyTaskTextureId(taskId, mapName))
                 .orElseGet(MeshyTaskTexture::new);
+        objectStorage.deleteAfterCommit(texture.getStorageKey());
         texture.setTaskId(taskId);
         texture.setMapName(mapName);
         texture.setSourceKey(sourceKey);
         texture.setContentType(contentType);
         texture.setExt(ext);
-        texture.setData(bytes);
+        texture.setStorageKey(objectStorage.put(MeshyStorageKeys.texture(taskId, mapName), ext, bytes, contentType));
         texture.setSize(bytes.length);
         textureRepository.save(texture);
     }
@@ -1021,7 +1035,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         Optional<MeshyTaskAsset> asset = assetRepository.findById(id);
         if (asset.isPresent()) {
             MeshyTaskAsset a = asset.get();
-            byte[] data = a.getData();
+            byte[] data = objectStorage.get(a.getStorageKey());
             if (heightMm != null) {
                 if (heightMm <= 0 || heightMm > MAX_EXPORT_HEIGHT_MM) {
                     throw new BadRequestException("meshy.export.heightOutOfRange");
@@ -1059,7 +1073,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         Optional<MeshyTaskAsset> asset = assetRepository.findById(taskId);
         if (asset.isPresent()) {
             MeshyTaskAsset a = asset.get();
-            return new ExportPrep(task, a.getFormat(), a.getData());
+            return new ExportPrep(task, a.getFormat(), objectStorage.get(a.getStorageKey()));
         }
         return new ExportPrep(task, normalizeFormat(format), null);
     }
@@ -1588,7 +1602,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             // data URI.
             Optional<MeshyTaskAsset> asset = assetRepository.findById(source.getId());
             if (asset.isPresent()) {
-                return new SourceRef(null, toModelDataUri(asset.get().getData()), source.getId());
+                return new SourceRef(null, toModelDataUri(objectStorage.get(asset.get().getStorageKey())), source.getId());
             }
             if (acceptedAsInputTask(source.getTaskType())) {
                 return new SourceRef(source.getMeshyTaskId(), null, source.getId());
@@ -1767,10 +1781,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     /** Insert/replace the local model blob for a task. */
     private void storeAsset(UUID taskId, byte[] bytes, String format) {
         MeshyTaskAsset asset = assetRepository.findById(taskId).orElseGet(MeshyTaskAsset::new);
+        String contentType = contentTypeForModel(format);
+        // Drop the previous "current" object — unless it is the shared original backup
+        // (backupOriginalIfMissing seeds a new row's live key with the backup's key).
+        if (asset.getStorageKey() != null && !asset.getStorageKey().equals(asset.getOriginalStorageKey())) {
+            objectStorage.deleteAfterCommit(asset.getStorageKey());
+        }
         asset.setTaskId(taskId);
         asset.setFormat(format);
-        asset.setContentType(contentTypeForModel(format));
-        asset.setData(bytes);
+        asset.setContentType(contentType);
+        asset.setStorageKey(objectStorage.put(MeshyStorageKeys.model(taskId), format, bytes, contentType));
         asset.setSize(bytes.length);
         assetRepository.save(asset);
     }
@@ -1781,23 +1801,27 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      */
     private void backupOriginalIfMissing(UUID taskId, byte[] bytes, String format) {
         MeshyTaskAsset asset = assetRepository.findById(taskId).orElse(null);
-        if (asset != null && asset.getOriginalData() != null) {
+        if (asset != null && asset.getOriginalStorageKey() != null) {
             return; // already backed up — never overwrite it
         }
         if (asset == null) {
-            // No local asset row yet: these pre-repair bytes ARE the original. Seed the row's
-            // live fields too (they're NOT NULL) — the storeAsset() call right after this one
-            // overwrites them with the repaired mesh, so this is a one-instant placeholder.
+            // No local asset row yet: these pre-repair bytes ARE the original. The storeAsset()
+            // call right after this one fills the row's live fields with the repaired mesh.
             asset = new MeshyTaskAsset();
             asset.setTaskId(taskId);
+        }
+        String contentType = contentTypeForModel(format);
+        String originalKey = objectStorage.put(MeshyStorageKeys.originalModel(taskId), format, bytes, contentType);
+        if (asset.getStorageKey() == null) {
+            // Live fields are NOT NULL: until storeAsset() replaces them, point them at the backup.
             asset.setFormat(format);
-            asset.setContentType(contentTypeForModel(format));
-            asset.setData(bytes);
+            asset.setContentType(contentType);
+            asset.setStorageKey(originalKey);
             asset.setSize(bytes.length);
         }
         asset.setOriginalFormat(format);
-        asset.setOriginalContentType(contentTypeForModel(format));
-        asset.setOriginalData(bytes);
+        asset.setOriginalContentType(contentType);
+        asset.setOriginalStorageKey(originalKey);
         asset.setOriginalSize((long) bytes.length);
         assetRepository.save(asset);
     }
