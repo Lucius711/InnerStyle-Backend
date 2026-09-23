@@ -62,6 +62,9 @@ public class MeshyTaskResponse {
     @Schema(description = "When Meshy CDN signed URLs expire. Null for local/uploaded assets.")
     private Instant expiresAt;
 
+    @Schema(description = "True when a pre-repair backup exists (revert available). Detail endpoint only.")
+    private Boolean hasOriginalBackup;
+
     private Instant createdAt;
 
     private Instant updatedAt;

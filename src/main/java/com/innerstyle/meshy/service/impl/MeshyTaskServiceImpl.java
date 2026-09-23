@@ -1,6 +1,7 @@
 package com.innerstyle.meshy.service.impl;
 
 import com.innerstyle.auth.security.UserPrincipal;
+import com.innerstyle.common.exception.AppException;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ForbiddenException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
@@ -639,7 +640,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         // offer "revert to original" later, since repair can leave a badly deformed mesh.
         backupOriginalIfMissing(task.getId(), model, inExt);
 
-        MeshToolRunner.RepairOutput out = meshToolRunner.repairToGlb(model, inExt);
+        MeshToolRunner.RepairOutput out = meshToolRunner.repairToGlb(model, inExt, baseColorTextureBytes(task));
 
         // Save the repaired mesh in place; the served model now points at our stored
         // asset.
@@ -707,7 +708,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (task.getUserId() != null && !task.getUserId().equals(userId)) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
-        return taskMapper.toResponse(task);
+        MeshyTaskResponse response = taskMapper.toResponse(task);
+        response.setHasOriginalBackup(assetRepository.existsByTaskIdAndOriginalStorageKeyIsNotNull(id));
+        return response;
     }
 
     @Override
@@ -1233,15 +1236,13 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      * exports grey).
      */
     private byte[] baseColorTextureBytes(MeshyTask task) {
-        List<MeshyTextureDto> textures = task.getTextureUrls();
-        if (textures == null || textures.isEmpty()) {
-            return null;
+        // Go through the R2-cached texture proxy: Meshy's CDN URL is presigned and expires, so a
+        // raw fetch returns 403 on older tasks and the mesh op would export an untextured model.
+        try {
+            return fetchTexture(task.getId(), "base_color").bytes();
+        } catch (AppException e) {
+            return null; // no base-color map (or CDN + cache both unavailable)
         }
-        String url = textures.get(0).getBaseColor();
-        if (url == null || url.isBlank()) {
-            return null;
-        }
-        return tryFetchBytes(url);
     }
 
     private byte[] tryFetchBytes(String url) {

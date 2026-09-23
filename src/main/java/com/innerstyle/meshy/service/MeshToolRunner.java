@@ -180,21 +180,25 @@ public class MeshToolRunner {
     }
 
     /**
-     * Repair a model into a watertight mesh and return it as GLB (geometry-only; textures are not
-     * preserved by the repair), along with the before/after printability reports.
+     * Repair a model into a watertight mesh and return it as GLB (texture re-attached best-effort
+     * by nearest-neighbour UV transfer), along with the before/after printability reports.
      *
      * @param modelBytes source model bytes
-     * @param inputExt   source file extension so trimesh picks the loader
+     * @param inputExt     source file extension so trimesh picks the loader
+     * @param baseColorPng optional base-color map to re-bind when the GLB only references it by URL
      */
-    public RepairOutput repairToGlb(byte[] modelBytes, String inputExt) {
+    public RepairOutput repairToGlb(byte[] modelBytes, String inputExt, byte[] baseColorPng) {
         String ext = (inputExt == null || inputExt.isBlank()) ? "glb" : inputExt.toLowerCase();
         Path input = null;
         Path output = null;
+        Path texture = null;
         try {
             input = Files.createTempFile("innerstyle-repair-in-", "." + ext);
             Files.write(input, modelBytes);
             output = Files.createTempFile("innerstyle-repair-out-", ".glb");
-            JsonNode json = run("repair", input.toString(), output.toString());
+            texture = writeTexture(baseColorPng);
+            JsonNode json = run("repair", input.toString(), output.toString(),
+                texture == null ? "" : texture.toString());
             byte[] glb = Files.readAllBytes(output);
             return new RepairOutput(glb, toResponse(json.path("before")), toResponse(json.path("after")));
         } catch (IOException e) {
@@ -202,6 +206,7 @@ public class MeshToolRunner {
         } finally {
             quietDelete(input);
             quietDelete(output);
+            quietDelete(texture);
         }
     }
 

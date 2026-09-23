@@ -5,7 +5,7 @@ Mesh printability tools for InnerStyle — invoked by the Java backend.
 Usage:
     mesh_tools.py analyze <input>
         -> prints a JSON object describing printability.
-    mesh_tools.py repair  <input> <output>
+    mesh_tools.py repair  <input> <output> [texturePath]
         -> repairs the mesh (watertight) into <output>, prints {"before":..,"after":..}.
     mesh_tools.py base    <input> <output> [shape] [heightRatio] [marginRatio] [color] [sigSpec]
         -> adds a base under the model (optionally engraving a signature), prints {"ok":..}.
@@ -64,20 +64,18 @@ def _combined_vertices_uv(scene):
     """Flatten every geometry in `scene` into one (vertices, uv-or-None) pair, in the scene's own
     per-geometry vertex order. trimesh.util.concatenate drops UVs when geometries don't share one
     visual type (a Meshy figure's body/hair/clothes primitives usually don't), so this is done by
-    hand instead. `uv` is None unless every geometry has one UV row per vertex."""
+    hand instead. Only UV-mapped geometries contribute; UV-less ones (e.g. our vertex-coloured
+    base) are skipped instead of disabling the whole transfer. `uv` is None if no geometry has UVs."""
     verts, uvs = [], []
-    have_uv = True
     for geom in scene.geometry.values():
         v = np.asarray(geom.vertices)
-        verts.append(v)
         uv = getattr(getattr(geom, "visual", None), "uv", None)
         if uv is not None and len(uv) == len(v):
+            verts.append(v)
             uvs.append(np.asarray(uv))
-        else:
-            have_uv = False
-    vertices = np.concatenate(verts, axis=0) if verts else np.zeros((0, 3))
-    uv_arr = np.concatenate(uvs, axis=0) if (have_uv and uvs) else None
-    return vertices, uv_arr
+    if not uvs:
+        return np.zeros((0, 3)), None
+    return np.concatenate(verts, axis=0), np.concatenate(uvs, axis=0)
 
 
 def _dedupe_points(points, values, decimals=5):
@@ -953,12 +951,20 @@ def main():
             print(json.dumps({"error": "repair requires <output>"}))
             sys.exit(2)
         out = sys.argv[3]
+        texture_path = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
         # One parse of the source (as a textured scene) serves both the mesh pymeshfix repairs and
         # the texture repair re-attaches afterwards -- loading it a second time here would decode
         # the base-color image twice, needlessly doubling peak memory on top of pymeshfix's own
         # (already sizeable) footprint.
         try:
             scene, dom = _load_scene_with_texture(src)
+            if dom is None and texture_path:
+                # Meshy GLBs reference the map by (expiring) CDN URL; use the one the backend fetched.
+                try:
+                    from PIL import Image
+                    dom = Image.open(texture_path).convert("RGBA")
+                except Exception:  # noqa: BLE001 -- unreadable map just means "no embed"
+                    dom = None
             src_v, src_uv = _combined_vertices_uv(scene)
             if src_uv is not None:
                 src_v, src_uv = _dedupe_points(src_v, src_uv)
@@ -986,11 +992,11 @@ def main():
         # Best-effort: any failure here just exports untextured, same as before this fix, rather
         # than failing the whole repair over a colour problem.
         try:
-            if dom is not None and src_uv is not None and len(src_v) > 0 \
+            if src_uv is not None and len(src_v) > 0 \
                     and len(fixed.vertices) <= MAX_REPAIR_TEXTURE_VERTS \
                     and len(src_v) <= MAX_REPAIR_TEXTURE_VERTS:
                 uv = _nearest_uv(src_v, src_uv, fixed.vertices)
-                fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)
+                fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)  # dom may be None
         except Exception:  # noqa: BLE001
             pass
         del scene, src_v, src_uv

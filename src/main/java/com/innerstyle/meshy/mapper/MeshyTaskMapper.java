@@ -19,6 +19,7 @@ public interface MeshyTaskMapper {
      * the image server-side.
      */
     @Mapping(target = "thumbnailUrl", expression = "java(thumbnailProxyUrl(task))")
+    @Mapping(target = "hasOriginalBackup", ignore = true)
     MeshyTaskResponse toResponse(MeshyTask task);
 
     default String thumbnailProxyUrl(MeshyTask task) {

@@ -94,7 +94,7 @@ class MeshyTaskServiceImplTest {
         when(taskMapper.toResponse(any(MeshyTask.class)))
             .thenReturn(new MeshyTaskResponse(UUID.randomUUID(), "meshy-123",
                 MeshyTaskType.IMAGE_TO_3D, MeshyTaskStatus.PENDING, 0, null, null,
-                null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null));
 
         MeshyTaskResponse result = service.createImageTo3d(request);
 

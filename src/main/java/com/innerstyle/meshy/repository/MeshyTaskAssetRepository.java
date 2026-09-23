@@ -11,4 +11,7 @@ import java.util.UUID;
 public interface MeshyTaskAssetRepository extends JpaRepository<MeshyTaskAsset, UUID> {
 
     boolean existsByTaskId(UUID taskId);
+
+    /** Whether a pre-repair backup exists, i.e. "revert to original" is possible. */
+    boolean existsByTaskIdAndOriginalStorageKeyIsNotNull(UUID taskId);
 }
