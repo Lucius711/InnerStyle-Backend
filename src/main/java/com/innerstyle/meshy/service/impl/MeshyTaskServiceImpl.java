@@ -973,9 +973,6 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         MeshyTaskTexture cached = textureRepository
                 .findById(new MeshyTaskTextureId(id, key))
                 .orElse(null);
-        if (cached != null && cached.getStorageKey() == null) {
-            cached = null; // legacy row not yet copied to R2 — treat as a cache miss
-        }
         if (cached != null && cached.getSourceKey().equals(sourceKey)) {
             return new MeshyTaskService.ModelData(
                     objectStorage.get(cached.getStorageKey()), cached.getContentType(), "texture." + cached.getExt());

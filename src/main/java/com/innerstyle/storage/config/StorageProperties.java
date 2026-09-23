@@ -10,8 +10,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  */
 @ConfigurationProperties(prefix = "app.storage")
 public record StorageProperties(
-    @DefaultValue R2 r2,
-    @DefaultValue Backfill backfill
+    @DefaultValue R2 r2
 ) {
 
     /** R2 connection settings. Endpoint: {@code https://<account-id>.r2.cloudflarestorage.com}. */
@@ -20,11 +19,5 @@ public record StorageProperties(
         String accessKeyId,
         String secretAccessKey,
         @DefaultValue("innerstyle-assets") String bucket
-    ) {}
-
-    /** One-off copy of legacy BYTEA blobs from PostgreSQL into R2 at startup. */
-    public record Backfill(
-        @DefaultValue("true") boolean enabled,
-        @DefaultValue("20") int batchSize
     ) {}
 }

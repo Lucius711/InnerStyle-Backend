@@ -39,8 +39,7 @@ class R2ObjectStorageServiceTest {
     @BeforeEach
     void setUp() {
         var props = new StorageProperties(
-            new StorageProperties.R2("https://example.r2.cloudflarestorage.com", "id", "secret", BUCKET),
-            new StorageProperties.Backfill(false, 20));
+            new StorageProperties.R2("https://example.r2.cloudflarestorage.com", "id", "secret", BUCKET));
         storage = new R2ObjectStorageService(r2Client, props);
     }
 

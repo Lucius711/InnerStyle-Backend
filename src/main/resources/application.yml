@@ -120,10 +120,6 @@ app:
       access-key-id: ${R2_ACCESS_KEY_ID:}
       secret-access-key: ${R2_SECRET_ACCESS_KEY:}
       bucket: ${R2_BUCKET:innerstyle-assets}
-    # Copy legacy BYTEA blobs (pre-R2 rows) into R2 on startup; idempotent, safe to leave on.
-    backfill:
-      enabled: ${R2_BACKFILL_ENABLED:true}
-      batch-size: 20
 
   # --- Redis-backed cache + rate limiting (fail-open if Redis is unavailable) ---
   redis:
