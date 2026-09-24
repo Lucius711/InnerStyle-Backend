@@ -80,6 +80,29 @@ class PaymentServiceImplTest {
         return new GatewayVerification(sig, success, "123456", amount, "TXN1", "00");
     }
 
+    // ------------------------------------------------------------------ resume print payment
+
+    @Test
+    @DisplayName("resume print payment: reuses the existing payOS link, never creates a second one")
+    void resumePrintPayment_reusesExistingLink() {
+        UUID printOrderId = UUID.randomUUID();
+        PaymentOrder existing = subscriptionOrder(PaymentStatus.PROCESSING);
+        existing.setPurpose(PaymentPurpose.PRINT);
+        existing.setReference(printOrderId.toString());
+        existing.setProvider(PaymentProvider.PAYOS);
+        existing.setCheckoutUrl("https://pay.payos.vn/web/abc");
+        existing.setQrCode("QR");
+        when(paymentOrderRepository.findFirstByPurposeAndReferenceAndStatusOrderByCreatedAtDesc(
+            PaymentPurpose.PRINT, printOrderId.toString(), PaymentStatus.PROCESSING))
+            .thenReturn(Optional.of(existing));
+
+        var res = service.resumePrintPayment(UUID.randomUUID(), printOrderId, new BigDecimal("100000"), "1.1.1.1");
+
+        assertThat(res.payUrl()).isEqualTo("https://pay.payos.vn/web/abc");
+        assertThat(res.qrCode()).isEqualTo("QR");
+        verify(payosGateway, never()).createPaymentLink(any());
+    }
+
     // ------------------------------------------------------------------ payOS webhook
 
     @Test

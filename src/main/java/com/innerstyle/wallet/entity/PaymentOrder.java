@@ -77,8 +77,12 @@ public class PaymentOrder {
     @Column(name = "bank_code", length = 40)
     private String bankCode;
 
-    @Column(name = "return_url", columnDefinition = "text")
-    private String returnUrl;
+    /** payOS checkout link, kept so an abandoned payment can be resumed with the same link. */
+    @Column(name = "checkout_url", columnDefinition = "text")
+    private String checkoutUrl;
+
+    @Column(name = "qr_code", columnDefinition = "text")
+    private String qrCode;
 
     @Column(length = 255)
     private String description;

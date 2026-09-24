@@ -21,6 +21,12 @@ public interface PaymentService {
     PaymentInitResponse createPrintPayment(UUID userId, UUID printOrderId, BigDecimal amount,
                                            PaymentProvider provider, String clientIp);
 
+    /**
+     * Resume payment of a still-unpaid print order: returns its existing payOS link when there is
+     * one (so the user can never end up with two payable links), else starts a new payment.
+     */
+    PaymentInitResponse resumePrintPayment(UUID userId, UUID printOrderId, BigDecimal amount, String clientIp);
+
     /** Handle a payOS webhook (server-to-server transaction notification). */
     void handlePayosWebhook(Map<String, Object> payload);
 

@@ -99,6 +99,20 @@ public class PrintOrderServiceImpl implements PrintOrderService {
             .map(this::toResponse);
     }
 
+    @Override
+    @Transactional
+    public PrintOrderInitResponse resumePayment(UUID userId, UUID orderId, String clientIp) {
+        PrintOrder order = printOrderRepository.findById(orderId)
+            .filter(o -> o.getUser().getId().equals(userId))
+            .orElseThrow(() -> new ResourceNotFoundException("print.order.notFound"));
+        if (order.getStatus() != PrintOrderStatus.PENDING) {
+            throw new BadRequestException("print.order.notPending");
+        }
+        PaymentInitResponse pay = paymentService.resumePrintPayment(
+            userId, order.getId(), order.getAmount(), clientIp);
+        return new PrintOrderInitResponse(order.getId(), pay);
+    }
+
     private PrintOrderResponse toResponse(PrintOrder o) {
         return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(), o.getAmount(),
             o.getCurrency(), o.getStatus().name(), o.getNote(),

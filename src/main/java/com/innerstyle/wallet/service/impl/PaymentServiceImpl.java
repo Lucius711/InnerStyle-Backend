@@ -83,6 +83,19 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
+    public PaymentInitResponse resumePrintPayment(UUID userId, UUID printOrderId, BigDecimal amount,
+                                                  String clientIp) {
+        return paymentOrderRepository
+            .findFirstByPurposeAndReferenceAndStatusOrderByCreatedAtDesc(
+                PaymentPurpose.PRINT, printOrderId.toString(), PaymentStatus.PROCESSING)
+            .filter(p -> p.getCheckoutUrl() != null)
+            .map(p -> new PaymentInitResponse(p.getOrderCode(), p.getProvider().name(), p.getAmount(),
+                p.getCheckoutUrl(), p.getQrCode()))
+            .orElseGet(() -> createPrintPayment(userId, printOrderId, amount, PaymentProvider.PAYOS, clientIp));
+    }
+
+    @Override
+    @Transactional
     public void handlePayosWebhook(Map<String, Object> payload) {
         GatewayVerification v = payosGateway.verifyWebhook(payload);
         PaymentOrder order = lockOrder(v.orderCode());
@@ -159,6 +172,8 @@ public class PaymentServiceImpl implements PaymentService {
     private PaymentInitResponse buildPayUrl(PaymentOrder order, String clientIp) {
         PayosGateway.Checkout checkout = payosGateway.createPaymentLink(order);
         order.setStatus(PaymentStatus.PROCESSING);
+        order.setCheckoutUrl(checkout.checkoutUrl());
+        order.setQrCode(checkout.qrCode());
         paymentOrderRepository.save(order);
         return new PaymentInitResponse(order.getOrderCode(), order.getProvider().name(),
             order.getAmount(), checkout.checkoutUrl(), checkout.qrCode());

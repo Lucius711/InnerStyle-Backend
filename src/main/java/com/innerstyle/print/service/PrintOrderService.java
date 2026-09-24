@@ -18,4 +18,7 @@ public interface PrintOrderService {
     PrintOrderInitResponse placeOrder(UUID userId, CreatePrintOrderRequest request, String clientIp);
 
     Page<PrintOrderResponse> list(UUID userId, Pageable pageable);
+
+    /** Continue paying one of MY still-PENDING orders (e.g. after leaving the payment page). */
+    PrintOrderInitResponse resumePayment(UUID userId, UUID orderId, String clientIp);
 }

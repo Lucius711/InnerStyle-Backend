@@ -19,11 +19,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
 
 /**
  * Authenticated 3D-print order endpoints ({@code /api/user/print/**}). Placing an order starts a
@@ -56,6 +59,16 @@ public class PrintOrderController {
             @AuthenticationPrincipal UserPrincipal principal,
             @ParameterObject Pageable pageable) {
         return ApiResponse.success("print.orders", printOrderService.list(principal.getId(), pageable));
+    }
+
+    @Operation(summary = "Continue paying one of my PENDING orders (reuses its payOS link)")
+    @PostMapping("/orders/{id}/pay")
+    public ApiResponse<PrintOrderInitResponse> resumePayment(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID id,
+            HttpServletRequest http) {
+        return ApiResponse.success("print.order.payment",
+                printOrderService.resumePayment(principal.getId(), id, clientIp(http)));
     }
 
     private String clientIp(HttpServletRequest request) {

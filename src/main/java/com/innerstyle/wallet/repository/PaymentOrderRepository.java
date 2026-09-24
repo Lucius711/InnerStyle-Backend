@@ -1,6 +1,8 @@
 package com.innerstyle.wallet.repository;
 
 import com.innerstyle.wallet.entity.PaymentOrder;
+import com.innerstyle.wallet.entity.enums.PaymentPurpose;
+import com.innerstyle.wallet.entity.enums.PaymentStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,4 +30,8 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, UUID
     Optional<PaymentOrder> findByOrderCodeForUpdate(@Param("orderCode") String orderCode);
 
     Page<PaymentOrder> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
+
+    /** Latest payment still awaiting the gateway for a given purpose/reference (e.g. a print order). */
+    Optional<PaymentOrder> findFirstByPurposeAndReferenceAndStatusOrderByCreatedAtDesc(
+        PaymentPurpose purpose, String reference, PaymentStatus status);
 }
