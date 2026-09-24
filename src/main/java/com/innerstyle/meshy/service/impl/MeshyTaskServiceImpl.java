@@ -675,16 +675,24 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         com.innerstyle.meshy.dto.response.PrintabilityResponse before =
             meshToolRunner.analyze(current, asset.getFormat());
 
-        // Restore the backed-up bytes as the current model; the backup itself is kept, so
-        // reverting is not one-shot — the user can re-repair and revert again freely.
-        storeAsset(taskId, original, originalFormat);
+        // Point the current model back at the backup object itself (no copy): storageKey ==
+        // originalStorageKey is what "not repaired" means, so the revert button hides. The backup
+        // is kept, so the user can re-repair and revert again freely.
+        if (!asset.getStorageKey().equals(asset.getOriginalStorageKey())) {
+            objectStorage.deleteAfterCommit(asset.getStorageKey());
+        }
+        asset.setStorageKey(asset.getOriginalStorageKey());
+        asset.setFormat(originalFormat);
+        asset.setContentType(asset.getOriginalContentType());
+        asset.setSize(asset.getOriginalSize());
+        assetRepository.save(asset);
         pointModelAtAsset(task);
         invalidateUsdz(taskId);
         MeshyTaskResponse updated = persistAndMap(task);
 
         com.innerstyle.meshy.dto.response.PrintabilityResponse after =
             meshToolRunner.analyze(original, originalFormat);
-        return new com.innerstyle.meshy.dto.response.RepairResponse(before, after, updated, true);
+        return new com.innerstyle.meshy.dto.response.RepairResponse(before, after, updated, false);
     }
 
     /**
@@ -709,7 +717,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
         MeshyTaskResponse response = taskMapper.toResponse(task);
-        response.setHasOriginalBackup(assetRepository.existsByTaskIdAndOriginalStorageKeyIsNotNull(id));
+        response.setHasOriginalBackup(assetRepository.isRevertible(id));
         return response;
     }
 

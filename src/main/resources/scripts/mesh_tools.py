@@ -18,16 +18,14 @@ Notes:
   normals/UVs, which would otherwise make every edge look like a boundary.
 - "holes" counts connected boundary loops; "nonManifoldEdges" counts edges shared by >2 faces.
 - repair rebuilds the mesh's vertices/faces from scratch (pymeshfix), which drops all colour —
-  the texture is re-attached afterwards by nearest-neighbour UV transfer from the pre-repair
-  model, or the "repaired" model would export as a plain grey/white lump. That transfer is capped
-  (size guard + a hard wall-clock budget) and always best-effort: past either limit it just skips,
-  same as if no texture had been found, rather than risk an API-gateway timeout.
+  the texture is re-attached afterwards by matching the repaired vertices back to the pre-repair
+  ones (_transfer_uv), or the "repaired" model would export as a plain grey/white lump.
+  Best-effort: any failure just exports untextured.
 """
 
 import gc
 import json
 import sys
-import time
 
 import numpy as np
 import trimesh
@@ -40,12 +38,6 @@ def load(path):
         mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
     mesh.merge_vertices()
     return mesh
-
-
-# Above this vertex count, skip the repair texture-transfer pass (it's an O(n*m) nearest-neighbour
-# search) rather than risk a slow repair or an OOM on a constrained container — the repaired model
-# just exports untextured in that case, same as before this fix.
-MAX_REPAIR_TEXTURE_VERTS = 60_000
 
 
 def _load_scene_with_texture(path):
@@ -109,24 +101,30 @@ def _mesh_from_scene(scene):
     return mesh
 
 
-def _nearest_uv(src_vertices, src_uv, dst_vertices, chunk=200, time_budget=15.0):
-    """Nearest-neighbour UV transfer, numpy-only (no scipy dependency to add). For every point in
-    `dst_vertices`, copies the UV of the closest point in `src_vertices` (by squared distance —
-    sqrt isn't needed just to compare). Chunked so the pairwise distance matrix never fully
-    materialises for a 10k+ vertex figure. Bailing out past `time_budget` seconds (caught by the
-    caller, which just exports untextured) matters more here than finishing: this runs inside a
-    repair request the API gateway will 504 if it takes too long, whatever the mesh size."""
-    src = np.asarray(src_vertices, dtype=np.float32)
-    dst = np.asarray(dst_vertices, dtype=np.float32)
-    out = np.empty((len(dst), src_uv.shape[1]), dtype=src_uv.dtype)
-    deadline = time.monotonic() + time_budget
-    for i in range(0, len(dst), chunk):
-        if time.monotonic() > deadline:
-            raise TimeoutError("nearest_uv exceeded its time budget")
-        block = dst[i:i + chunk]
-        d = ((block[:, None, :] - src[None, :, :]) ** 2).sum(axis=2)
-        out[i:i + chunk] = src_uv[np.argmin(d, axis=1)]
-    return out
+def _transfer_uv(src_vertices, src_uv, dst_vertices, dst_edges, decimals=5, passes=16):
+    """pymeshfix keeps the original vertex positions and only adds a few for hole fills, so match
+    positions exactly (sort + searchsorted, O(n log n): ~1.5s at 700k vertices) and let each added
+    vertex inherit the UV of an already-matched neighbour along the mesh edges."""
+    dt = np.dtype([("x", "f8"), ("y", "f8"), ("z", "f8")])
+    src = np.ascontiguousarray(np.round(np.asarray(src_vertices, np.float64), decimals)).view(dt).ravel()
+    dst = np.ascontiguousarray(np.round(np.asarray(dst_vertices, np.float64), decimals)).view(dt).ravel()
+    order = np.argsort(src, kind="mergesort")
+    sorted_src = src[order]
+    pos = np.clip(np.searchsorted(sorted_src, dst), 0, len(src) - 1)
+    known = sorted_src[pos] == dst
+    uv = np.zeros((len(dst), src_uv.shape[1]), dtype=src_uv.dtype)
+    uv[known] = src_uv[order[pos[known]]]
+    a, b = dst_edges[:, 0], dst_edges[:, 1]
+    for _ in range(passes):
+        if known.all():
+            break
+        grown = known.copy()
+        for x, y in ((a, b), (b, a)):
+            m = known[x] & ~known[y]
+            uv[y[m]] = uv[x[m]]
+            grown[y[m]] = True
+        known = grown
+    return uv
 
 
 def count_holes(boundary_edges):
@@ -992,10 +990,8 @@ def main():
         # Best-effort: any failure here just exports untextured, same as before this fix, rather
         # than failing the whole repair over a colour problem.
         try:
-            if src_uv is not None and len(src_v) > 0 \
-                    and len(fixed.vertices) <= MAX_REPAIR_TEXTURE_VERTS \
-                    and len(src_v) <= MAX_REPAIR_TEXTURE_VERTS:
-                uv = _nearest_uv(src_v, src_uv, fixed.vertices)
+            if src_uv is not None and len(src_v) > 0:
+                uv = _transfer_uv(src_v, src_uv, fixed.vertices, fixed.edges_unique)
                 fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)  # dom may be None
         except Exception:  # noqa: BLE001
             pass
