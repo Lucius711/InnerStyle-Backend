@@ -748,6 +748,19 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     @Override
     @Transactional(readOnly = true)
+    public String modelETag(UUID id, String format) {
+        MeshyTask task = getTaskOrThrow(id);
+        String fmt = normalizeFormat(format);
+        // Stored objects get a fresh key on every write, so the key is the content version;
+        // Meshy-hosted results only change with the task (updatedAt).
+        String version = "usdz".equals(fmt)
+                ? usdzRepository.findById(id).map(MeshyTaskUsdz::getStorageKey).orElse("")
+                : assetRepository.findById(id).map(MeshyTaskAsset::getStorageKey).orElse("");
+        return "\"" + id + "-" + fmt + "-" + Integer.toHexString((version + task.getUpdatedAt()).hashCode()) + "\"";
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public MeshyTaskService.ModelData fetchModel(UUID id, String format) {
         MeshyTask task = getTaskOrThrow(id);
         String fmt = normalizeFormat(format);

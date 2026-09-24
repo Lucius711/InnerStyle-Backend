@@ -138,6 +138,12 @@ public interface MeshyTaskService {
     ModelData fetchModel(UUID id, String format);
 
     /**
+     * Cheap validator for {@link #fetchModel} (no bytes loaded): changes whenever the served model
+     * changes, so the browser can revalidate with If-None-Match and get a 304 instead of re-downloading.
+     */
+    String modelETag(UUID id, String format);
+
+    /**
      * Cache the browser-built iOS AR Quick Look file (USDZ) for a task so it can be served as a
      * real same-origin URL. iOS Quick Look cannot launch from an in-browser {@code blob:} URL, and
      * locally-edited models have no Meshy-hosted USDZ, so the frontend builds the USDZ (three.js

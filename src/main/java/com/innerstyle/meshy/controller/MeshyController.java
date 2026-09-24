@@ -27,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -43,6 +44,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -243,12 +245,19 @@ public class MeshyController {
     @Operation(summary = "Stream a task's model file (server-side proxy so browsers avoid the "
             + "CDN's missing CORS headers)")
     public ResponseEntity<byte[]> getTaskModel(@PathVariable UUID id,
-            @RequestParam(required = false) String format) {
+            @RequestParam(required = false) String format, WebRequest webRequest) {
+        // Browser keeps the file and revalidates each load: unchanged model -> tiny 304, no
+        // R2/Meshy download and no multi-MB transfer (was a full re-download after max-age=3600).
+        String etag = meshyTaskService.modelETag(id, format);
+        if (webRequest.checkNotModified(etag)) {
+            return null;
+        }
         MeshyTaskService.ModelData model = meshyTaskService.fetchModel(id, format);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, model.contentType())
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + model.filename() + "\"")
-                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")
+                .cacheControl(CacheControl.noCache().cachePublic())
+                .eTag(etag)
                 .body(model.bytes());
     }
 
