@@ -110,6 +110,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final MeshToolRunner meshToolRunner;
     private final ObjectStorageService objectStorage;
 
+    /** Name prefix of Meshy model files cached in dtb_meshy_task_textures (see cachedMeshyModel). */
+    private static final String MODEL_CACHE_PREFIX = "model_";
+
     private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
 
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of("image/jpeg", "image/jpg", "image/png", "image/webp");
@@ -760,7 +763,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public MeshyTaskService.ModelData fetchModel(UUID id, String format) {
         MeshyTask task = getTaskOrThrow(id);
         String fmt = normalizeFormat(format);
@@ -783,7 +786,64 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return new MeshyTaskService.ModelData(objectStorage.get(a.getStorageKey()), a.getContentType(),
                     "model." + a.getFormat());
         }
-        return downloadModel(task, fmt);
+        return cachedMeshyModel(task, fmt);
+    }
+
+    /**
+     * Serve a Meshy-hosted model from R2, downloading it from the Meshy CDN only on the first
+     * request (or if Meshy's file path changed). Meshy CDN links are presigned and the task is
+     * purged after ~14 days, so the copy in R2 is what keeps old models viewable.
+     * ponytail: reuses dtb_meshy_task_textures (a generic per-task remote-file cache keyed by
+     * name) with a {@code model_<ext>} name instead of a dedicated table; split it out if models
+     * ever need their own columns.
+     */
+    private MeshyTaskService.ModelData cachedMeshyModel(MeshyTask task, String fmt) {
+        String url = resolveAssetUrl(task, fmt);
+        if (url == null) {
+            throw new ResourceNotFoundException("meshy.task.notFound");
+        }
+        // Key on the resolved file's extension, never the raw ?format= (public, caller-controlled).
+        String ext = textureExt(url);
+        String name = MODEL_CACHE_PREFIX + ext;
+        String sourceKey = stripQuery(url);
+        MeshyTaskTexture cached = textureRepository.findById(new MeshyTaskTextureId(task.getId(), name))
+                .orElse(null);
+        if (cached != null && cached.getSourceKey().equals(sourceKey)) {
+            return new MeshyTaskService.ModelData(objectStorage.get(cached.getStorageKey()),
+                    cached.getContentType(), "model." + cached.getExt());
+        }
+        MeshyTaskService.ModelData fresh = downloadModel(task, fmt);
+        storeTexture(task.getId(), name, sourceKey, fresh.bytes(), fresh.contentType(), ext);
+        return fresh;
+    }
+
+    /**
+     * On a task's first transition into SUCCEEDED, copy its model + base-color map into R2 while
+     * the Meshy links are still valid. Best-effort: a failure here only means the first view
+     * downloads it instead.
+     * ponytail: runs inside the webhook/poll transaction (multi-MB download); move to an async
+     * job if webhook latency ever matters.
+     */
+    private void cacheMeshyAssetsOnSuccess(MeshyTask task, MeshyTaskStatus previous) {
+        if (isTerminal(previous) || task.getStatus() != MeshyTaskStatus.SUCCEEDED
+                || assetRepository.existsById(task.getId())) {
+            return;
+        }
+        // Raw fetch, not downloadModel(): its 403/404 handling marks the task EXPIRED, which must
+        // never happen to a task that just succeeded because of a best-effort copy.
+        String url = resolveAssetUrl(task, null);
+        byte[] bytes = url == null ? null : tryFetchBytes(url);
+        if (bytes == null) {
+            log.warn("Could not copy Meshy model of task {} to R2; first view will fetch it", task.getId());
+            return;
+        }
+        String ext = textureExt(url);
+        try {
+            storeTexture(task.getId(), MODEL_CACHE_PREFIX + ext, stripQuery(url), bytes, contentTypeFor(ext), ext);
+            baseColorTextureBytes(task);
+        } catch (RuntimeException e) { // R2 down must not roll back the status update
+            log.warn("Could not store Meshy model of task {} in R2: {}", task.getId(), e.getMessage());
+        }
     }
 
     /**
@@ -1432,6 +1492,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         log.info("Synced Meshy task {} -> {} ({}%)", task.getMeshyTaskId(), task.getStatus(),
                 task.getProgress());
         settleCreditsOnTerminal(task, previous);
+        cacheMeshyAssetsOnSuccess(task, previous);
         autoStripFigureBase(task, previous);
     }
 
