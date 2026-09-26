@@ -1063,6 +1063,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
 
         byte[] bytes = tryFetchBytes(url);
+        if (bytes == null && cached == null) {
+            // Expired signature on a task Meshy still keeps (~14 days): ask Meshy for fresh URLs
+            // (applyRemoteState stores them), then retry once. Same recovery as the thumbnail proxy.
+            String fresh = refreshedTextureUrl(task, key);
+            if (fresh != null) {
+                url = fresh;
+                sourceKey = stripQuery(url);
+                bytes = tryFetchBytes(url);
+            }
+        }
         if (bytes == null) {
             // CDN fetch failed (commonly an expired signature). Serve any stale cache we
             // have
@@ -1079,6 +1089,32 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String contentType = "image/" + ("jpg".equals(ext) ? "jpeg" : ext);
         storeTexture(id, key, sourceKey, bytes, contentType, ext);
         return new MeshyTaskService.ModelData(bytes, contentType, "texture." + ext);
+    }
+
+    /** Re-fetch the task from Meshy and return the new signed URL of one map, or null. */
+    private String refreshedTextureUrl(MeshyTask task, String map) {
+        if (task.getMeshyTaskId() == null || task.getMeshyTaskId().startsWith("upload-")) {
+            return null;
+        }
+        try {
+            applyRemoteState(meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId()));
+        } catch (RuntimeException e) {
+            log.warn("Texture URL refresh from Meshy failed for task {}: {}", task.getId(), e.getMessage());
+            return null;
+        }
+        List<MeshyTextureDto> textures = task.getTextureUrls();
+        if (textures == null || textures.isEmpty()) {
+            return null;
+        }
+        MeshyTextureDto tex = textures.get(0);
+        String url = switch (map) {
+            case "metallic" -> tex.getMetallic();
+            case "normal" -> tex.getNormal();
+            case "roughness" -> tex.getRoughness();
+            case "emission" -> tex.getEmission();
+            default -> tex.getBaseColor();
+        };
+        return (url == null || url.isBlank()) ? null : url;
     }
 
     /** Insert/replace the cached bytes for one of a task's texture maps. */
