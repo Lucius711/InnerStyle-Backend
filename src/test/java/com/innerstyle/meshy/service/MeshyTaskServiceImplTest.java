@@ -236,7 +236,7 @@ class MeshyTaskServiceImplTest {
     }
 
     @Test
-    void backfillToR2ReportsPurgedTaskWithoutExpiringIt() {
+    void backfillToR2HidesPurgedTaskWithNoModelInR2() {
         MeshyTask task = new MeshyTask();
         task.setId(UUID.randomUUID());
         task.setMeshyTaskId("meshy-gone");
@@ -247,6 +247,6 @@ class MeshyTaskServiceImplTest {
             .thenThrow(new ResourceNotFoundException("meshy.task.purgedByMeshy"));
 
         assertThat(service.backfillToR2(task.getId())).isEqualTo(MeshyTaskService.R2BackfillResult.PURGED);
-        assertThat(task.getStatus()).isEqualTo(MeshyTaskStatus.SUCCEEDED);
+        assertThat(task.getStatus()).isEqualTo(MeshyTaskStatus.EXPIRED); // hidden from the library
     }
 }

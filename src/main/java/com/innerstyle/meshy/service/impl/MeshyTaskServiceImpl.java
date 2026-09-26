@@ -895,6 +895,14 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             // Stored links are signed and short-lived: pull fresh ones (applyRemoteState saves them).
             applyRemoteState(meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId()));
         } catch (ResourceNotFoundException e) {
+            // Purged by Meshy. With no model of ours in R2 the task can't be opened any more:
+            // EXPIRED hides it from the user's library (list queries exclude EXPIRED).
+            boolean modelInR2 = assetRepository.existsById(id)
+                    || textureRepository.existsByTaskIdAndMapNameStartingWith(id, MODEL_CACHE_PREFIX);
+            if (!modelInR2) {
+                task.setStatus(MeshyTaskStatus.EXPIRED);
+                task.setErrorMessage("meshy.task.purgedByMeshy");
+            }
             return R2BackfillResult.PURGED;
         } catch (RuntimeException e) {
             log.warn("R2 backfill: Meshy lookup failed for task {}: {}", id, e.getMessage());

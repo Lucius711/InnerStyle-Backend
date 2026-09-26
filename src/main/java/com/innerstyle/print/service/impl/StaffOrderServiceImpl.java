@@ -3,9 +3,6 @@ package com.innerstyle.print.service.impl;
 import com.innerstyle.auth.entity.User;
 import com.innerstyle.common.exception.BadRequestException;
 import com.innerstyle.common.exception.ResourceNotFoundException;
-import com.innerstyle.common.exception.UpstreamServiceException;
-import com.innerstyle.meshy.client.MeshyClient;
-import com.innerstyle.meshy.client.dto.MeshyTaskDto;
 import com.innerstyle.meshy.dto.response.PrintabilityResponse;
 import com.innerstyle.meshy.dto.response.RepairResponse;
 import com.innerstyle.meshy.entity.MeshyTask;
@@ -24,12 +21,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
@@ -46,12 +37,7 @@ public class StaffOrderServiceImpl implements StaffOrderService {
     private final MeshyTaskRepository meshyTaskRepository;
     private final MeshyTaskService meshyTaskService;
     private final PrintabilityService printabilityService;
-    private final MeshyClient meshyClient;
 
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .build();
 
     @Override
     @Transactional(readOnly = true)
@@ -121,43 +107,11 @@ public class StaffOrderServiceImpl implements StaffOrderService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional // fetchThumbnailImage may cache the image into R2 on a miss
     public byte[] fetchThumbnail(UUID orderId) {
         PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getSourceTaskId() == null) return null;
-
-        MeshyTask task = meshyTaskRepository.findById(order.getSourceTaskId()).orElse(null);
-        if (task == null || task.getMeshyTaskId() == null) return null;
-
-        // Always fetch a fresh signed URL from Meshy API — stored URLs expire.
-        String freshUrl;
-        try {
-            MeshyTaskDto dto = meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId());
-            freshUrl = dto == null ? null : dto.getThumbnailUrl();
-        } catch (Exception e) {
-            log.warn("Failed to get fresh thumbnail URL for task {}: {}", task.getId(), e.getMessage());
-            // Fall back to the stored URL (may be expired).
-            freshUrl = task.getThumbnailUrl();
-        }
-        if (freshUrl == null || freshUrl.isBlank()) return null;
-
-        try {
-            HttpResponse<byte[]> resp = HTTP.send(
-                HttpRequest.newBuilder(URI.create(freshUrl))
-                    .timeout(Duration.ofSeconds(15))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-            if (resp.statusCode() / 100 != 2) {
-                log.warn("Meshy thumbnail returned HTTP {} for order {}", resp.statusCode(), orderId);
-                return null;
-            }
-            return resp.body();
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            log.warn("Failed to fetch thumbnail for order {}: {}", orderId, e.getMessage());
-            return null;
-        }
+        // Same source as the customer-facing proxy: R2 first, Meshy only as a one-time fallback.
+        return order.getSourceTaskId() == null ? null : meshyTaskService.fetchThumbnailImage(order.getSourceTaskId());
     }
 
     // ----- helpers -----
