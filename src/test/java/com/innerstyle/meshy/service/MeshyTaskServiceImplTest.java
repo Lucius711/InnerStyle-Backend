@@ -234,4 +234,19 @@ class MeshyTaskServiceImplTest {
             .isInstanceOf(ResourceNotFoundException.class)
             .hasMessage("meshy.task.notFound");
     }
+
+    @Test
+    void backfillToR2ReportsPurgedTaskWithoutExpiringIt() {
+        MeshyTask task = new MeshyTask();
+        task.setId(UUID.randomUUID());
+        task.setMeshyTaskId("meshy-gone");
+        task.setTaskType(MeshyTaskType.MULTI_IMAGE_TO_3D);
+        task.setStatus(MeshyTaskStatus.SUCCEEDED);
+        when(taskRepository.findById(task.getId())).thenReturn(Optional.of(task));
+        when(meshyClient.getTask(MeshyTaskType.MULTI_IMAGE_TO_3D, "meshy-gone"))
+            .thenThrow(new ResourceNotFoundException("meshy.task.purgedByMeshy"));
+
+        assertThat(service.backfillToR2(task.getId())).isEqualTo(MeshyTaskService.R2BackfillResult.PURGED);
+        assertThat(task.getStatus()).isEqualTo(MeshyTaskStatus.SUCCEEDED);
+    }
 }

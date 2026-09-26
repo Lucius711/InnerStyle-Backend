@@ -23,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -225,4 +226,16 @@ public interface MeshyTaskService {
      * stored record. No-op if we don't track the given Meshy task id.
      */
     void applyRemoteState(MeshyTaskDto remote);
+
+    /** Ids of SUCCEEDED, non-deleted Meshy-generated tasks whose files may still need copying to R2. */
+    List<UUID> r2BackfillCandidates();
+
+    /**
+     * Refresh one task's signed links from Meshy and copy its model + PBR maps into R2
+     * (idempotent: already-cached files are not downloaded again). Runs in its own transaction.
+     */
+    R2BackfillResult backfillToR2(UUID id);
+
+    /** Outcome of {@link #backfillToR2}. */
+    enum R2BackfillResult { COPIED, PURGED, FAILED }
 }

@@ -113,6 +113,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     /** Name prefix of Meshy model files cached in dtb_meshy_task_textures (see cachedMeshyModel). */
     private static final String MODEL_CACHE_PREFIX = "model_";
 
+    /** PBR map names served by the texture proxy (see fetchTexture). */
+    private static final List<String> TEXTURE_MAPS = List.of("base_color", "metallic", "normal", "roughness", "emission");
+
     private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
 
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of("image/jpeg", "image/jpg", "image/png", "image/webp");
@@ -818,32 +821,86 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * On a task's first transition into SUCCEEDED, copy its model + base-color map into R2 while
-     * the Meshy links are still valid. Best-effort: a failure here only means the first view
-     * downloads it instead.
+     * On a task's first transition into SUCCEEDED, copy its files into R2 while the Meshy links
+     * are still valid. Best-effort: a failure here only means the first view downloads it instead.
      * ponytail: runs inside the webhook/poll transaction (multi-MB download); move to an async
      * job if webhook latency ever matters.
      */
     private void cacheMeshyAssetsOnSuccess(MeshyTask task, MeshyTaskStatus previous) {
-        if (isTerminal(previous) || task.getStatus() != MeshyTaskStatus.SUCCEEDED
-                || assetRepository.existsById(task.getId())) {
+        if (isTerminal(previous) || task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
             return;
         }
-        // Raw fetch, not downloadModel(): its 403/404 handling marks the task EXPIRED, which must
-        // never happen to a task that just succeeded because of a best-effort copy.
+        copyMeshyAssetsToR2(task);
+    }
+
+    /**
+     * Copy a Meshy task's model (unless a local/edited model already exists or it is already
+     * cached) and all its PBR maps into R2. Meshy can purge a task within days, after which its
+     * files are gone for good. Returns false when the model could not be copied.
+     */
+    private boolean copyMeshyAssetsToR2(MeshyTask task) {
+        boolean modelOk = assetRepository.existsById(task.getId()) || copyMeshyModelToR2(task);
+        for (String map : TEXTURE_MAPS) {
+            try {
+                fetchTexture(task.getId(), map); // caches into R2; a cache hit costs no download
+            } catch (AppException e) {
+                // map not produced for this task (404) or not downloadable — nothing to keep
+            } catch (RuntimeException e) {
+                log.warn("Could not store texture {} of task {} in R2: {}", map, task.getId(), e.getMessage());
+            }
+        }
+        return modelOk;
+    }
+
+    private boolean copyMeshyModelToR2(MeshyTask task) {
         String url = resolveAssetUrl(task, null);
-        byte[] bytes = url == null ? null : tryFetchBytes(url);
-        if (bytes == null) {
-            log.warn("Could not copy Meshy model of task {} to R2; first view will fetch it", task.getId());
-            return;
+        if (url == null) {
+            return true; // nothing hosted by Meshy to copy
         }
         String ext = textureExt(url);
-        try {
-            storeTexture(task.getId(), MODEL_CACHE_PREFIX + ext, stripQuery(url), bytes, contentTypeFor(ext), ext);
-            baseColorTextureBytes(task);
-        } catch (RuntimeException e) { // R2 down must not roll back the status update
-            log.warn("Could not store Meshy model of task {} in R2: {}", task.getId(), e.getMessage());
+        String name = MODEL_CACHE_PREFIX + ext;
+        boolean alreadyCached = textureRepository.findById(new MeshyTaskTextureId(task.getId(), name))
+                .map(c -> c.getSourceKey().equals(stripQuery(url)))
+                .orElse(false);
+        if (alreadyCached) {
+            return true;
         }
+        // Raw fetch, not downloadModel(): its 403/404 handling marks the task EXPIRED, which a
+        // best-effort copy must never do.
+        byte[] bytes = tryFetchBytes(url);
+        if (bytes == null) {
+            log.warn("Could not download Meshy model of task {} for R2", task.getId());
+            return false;
+        }
+        try {
+            storeTexture(task.getId(), name, stripQuery(url), bytes, contentTypeFor(ext), ext);
+            return true;
+        } catch (RuntimeException e) { // R2 down must not roll back the caller's transaction
+            log.warn("Could not store Meshy model of task {} in R2: {}", task.getId(), e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UUID> r2BackfillCandidates() {
+        return taskRepository.findR2BackfillCandidates();
+    }
+
+    @Override
+    @Transactional
+    public R2BackfillResult backfillToR2(UUID id) {
+        MeshyTask task = getTaskOrThrow(id);
+        try {
+            // Stored links are signed and short-lived: pull fresh ones (applyRemoteState saves them).
+            applyRemoteState(meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId()));
+        } catch (ResourceNotFoundException e) {
+            return R2BackfillResult.PURGED;
+        } catch (RuntimeException e) {
+            log.warn("R2 backfill: Meshy lookup failed for task {}: {}", id, e.getMessage());
+            return R2BackfillResult.FAILED;
+        }
+        return copyMeshyAssetsToR2(task) ? R2BackfillResult.COPIED : R2BackfillResult.FAILED;
     }
 
     /**
@@ -1071,6 +1128,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                 url = fresh;
                 sourceKey = stripQuery(url);
                 bytes = tryFetchBytes(url);
+            }
+            if (bytes == null) {
+                log.warn("Texture {} of task {} still unavailable after Meshy refresh (fresh url: {})",
+                        key, id, fresh != null);
             }
         }
         if (bytes == null) {
