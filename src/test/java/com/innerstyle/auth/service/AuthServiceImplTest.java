@@ -1,5 +1,6 @@
 package com.innerstyle.auth.service;
 
+import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -56,6 +57,8 @@ import static org.mockito.Mockito.when;
  */
 class AuthServiceImplTest {
 
+    private static final String POLICY_VERSION = "2026-09-25";
+
     private UserRepository userRepository;
     private RoleRepository roleRepository;
     private OauthAccountRepository oauthAccountRepository;
@@ -99,7 +102,24 @@ class AuthServiceImplTest {
         service = new AuthServiceImpl(userRepository, roleRepository, oauthAccountRepository,
             loginAuditRepository, jwtService, jwtProperties, refreshTokenService,
             userMapper, tokenBlacklist, rateLimiterService, rateLimitProperties, redisKeys,
-            List.of(googleVerifier));
+            new AuthProperties("http://localhost:5173", POLICY_VERSION), List.of(googleVerifier));
+    }
+
+    // ------------------------------------------------------------------ acceptPolicy
+
+    @Test
+    @DisplayName("acceptPolicy: current version is stored; a stale version is rejected")
+    void acceptPolicy_storesCurrentVersion_rejectsStale() {
+        User user = buildUser(UUID.randomUUID(), "huy@example.com");
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.acceptPolicy(user.getId(), "2020-01-01"))
+            .isInstanceOf(BadRequestException.class);
+        assertThat(user.getAcceptedPolicyVersion()).isNull();
+
+        service.acceptPolicy(user.getId(), POLICY_VERSION);
+        assertThat(user.getAcceptedPolicyVersion()).isEqualTo(POLICY_VERSION);
+        assertThat(user.getPolicyAcceptedAt()).isNotNull();
     }
 
     // ------------------------------------------------------------------ socialLogin
@@ -290,7 +310,7 @@ class AuthServiceImplTest {
         return new UserProfileResponse(
             u == null ? UUID.randomUUID() : u.getId(),
             u == null ? "x@example.com" : u.getEmail(),
-            "Test User", null, "ACTIVE", true, List.of("USER"), Instant.now());
+            "Test User", null, "ACTIVE", true, List.of("USER"), Instant.now(), POLICY_VERSION, false);
     }
 
     private RefreshToken refreshTokenFor(User u) {

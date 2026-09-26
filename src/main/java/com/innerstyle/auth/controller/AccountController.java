@@ -1,5 +1,6 @@
 package com.innerstyle.auth.controller;
 
+import com.innerstyle.auth.dto.request.AcceptPolicyRequest;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
 import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.auth.service.AuthService;
@@ -7,10 +8,13 @@ import com.innerstyle.common.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -31,5 +35,13 @@ public class AccountController {
     @GetMapping("/me")
     public ApiResponse<UserProfileResponse> me(@AuthenticationPrincipal UserPrincipal principal) {
         return ApiResponse.success("user.profile", authService.me(principal.getId()));
+    }
+
+    @Operation(summary = "Accept the current Terms & Policies version")
+    @PostMapping("/policy-acceptance")
+    public ApiResponse<UserProfileResponse> acceptPolicy(@AuthenticationPrincipal UserPrincipal principal,
+            @Valid @RequestBody AcceptPolicyRequest request) {
+        return ApiResponse.success("user.policyAccepted",
+            authService.acceptPolicy(principal.getId(), request.version()));
     }
 }

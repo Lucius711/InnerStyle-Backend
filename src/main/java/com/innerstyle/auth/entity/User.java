@@ -65,6 +65,13 @@ public class User {
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
 
+    /** Terms &amp; Policies version the user last accepted (null = never). See {@code app.auth.policy-version}. */
+    @Column(name = "accepted_policy_version", length = 32)
+    private String acceptedPolicyVersion;
+
+    @Column(name = "policy_accepted_at")
+    private Instant policyAcceptedAt;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "dtb_user_roles",

@@ -18,4 +18,7 @@ public interface AuthService {
     AuthTokensResponse socialLogin(OauthProvider provider, String providerToken, String ip, String userAgent);
 
     UserProfileResponse me(UUID userId);
+
+    /** Record that the user accepted {@code version}; it must be the current policy version. */
+    UserProfileResponse acceptPolicy(UUID userId, String version);
 }

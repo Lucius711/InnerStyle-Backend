@@ -76,6 +76,8 @@ app:
   auth:
     # Base URL of the frontend, used to build the Google sign-in redirect target.
     frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+    # Terms & Policies version. Bump when the policy text changes -> users must accept again.
+    policy-version: ${POLICY_VERSION:2026-09-25}
   oauth:
     google:
       # Expected audience (your Google OAuth client id). Leave blank to skip aud check (dev only).

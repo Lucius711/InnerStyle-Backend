@@ -1,5 +1,6 @@
 package com.innerstyle.auth.service.impl;
 
+import com.innerstyle.auth.config.AuthProperties;
 import com.innerstyle.auth.config.JwtProperties;
 import com.innerstyle.auth.dto.response.AuthTokensResponse;
 import com.innerstyle.auth.dto.response.UserProfileResponse;
@@ -59,6 +60,7 @@ public class AuthServiceImpl implements AuthService {
     private final RateLimiterService rateLimiterService;
     private final RateLimitProperties rateLimitProperties;
     private final RedisKeys redisKeys;
+    private final AuthProperties authProperties;
     private final Map<OauthProvider, SocialTokenVerifier> verifiers = new EnumMap<>(OauthProvider.class);
 
     public AuthServiceImpl(UserRepository userRepository, RoleRepository roleRepository,
@@ -68,7 +70,7 @@ public class AuthServiceImpl implements AuthService {
                            RefreshTokenService refreshTokenService, UserMapper userMapper,
                            TokenBlacklist tokenBlacklist,
                            RateLimiterService rateLimiterService, RateLimitProperties rateLimitProperties,
-                           RedisKeys redisKeys,
+                           RedisKeys redisKeys, AuthProperties authProperties,
                            List<SocialTokenVerifier> socialVerifiers) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
@@ -82,6 +84,7 @@ public class AuthServiceImpl implements AuthService {
         this.rateLimiterService = rateLimiterService;
         this.rateLimitProperties = rateLimitProperties;
         this.redisKeys = redisKeys;
+        this.authProperties = authProperties;
         socialVerifiers.forEach(v -> this.verifiers.put(v.provider(), v));
     }
 
@@ -144,6 +147,20 @@ public class AuthServiceImpl implements AuthService {
     public UserProfileResponse me(UUID userId) {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
+        return userMapper.toProfile(user);
+    }
+
+    @Override
+    @Transactional
+    public UserProfileResponse acceptPolicy(UUID userId, String version) {
+        // Only the version currently served counts: a stale tab must not accept a newer text it never showed.
+        if (!authProperties.policyVersion().equals(version)) {
+            throw new BadRequestException("auth.policy.versionMismatch");
+        }
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
+        user.setAcceptedPolicyVersion(version);
+        user.setPolicyAcceptedAt(Instant.now());
         return userMapper.toProfile(user);
     }
 

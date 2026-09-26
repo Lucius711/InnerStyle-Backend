@@ -18,6 +18,10 @@ public record UserProfileResponse(
     String status,
     boolean emailVerified,
     List<String> roles,
-    Instant createdAt
+    Instant createdAt,
+    /** Current Terms &amp; Policies version the user must accept. */
+    String policyVersion,
+    /** True when the user has accepted {@code policyVersion}. */
+    boolean policyAccepted
 ) {
 }
