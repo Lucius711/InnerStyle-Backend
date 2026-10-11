@@ -74,6 +74,8 @@ public class SecurityConfig {
                         // (TextureLoader/GLTFLoader can't send an auth header).
                         .requestMatchers(HttpMethod.GET, "/api/common/3d/tasks/*/model/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/common/3d/tasks/*/texture").permitAll()
+                        // Animation downloads are plain <a href> links (no auth header), like the model proxy.
+                        .requestMatchers(HttpMethod.GET, "/api/common/3d/tasks/*/animation").permitAll()
                         // Captured preview image, loaded by a plain <img> tag (no auth header
                         // possible).
                         .requestMatchers(HttpMethod.GET, "/api/common/3d/tasks/*/thumbnail").permitAll()

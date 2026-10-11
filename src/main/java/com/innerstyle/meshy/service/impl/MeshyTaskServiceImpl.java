@@ -69,7 +69,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -85,6 +84,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -96,6 +96,10 @@ import java.util.zip.ZipOutputStream;
 @Service
 @RequiredArgsConstructor
 public class MeshyTaskServiceImpl implements MeshyTaskService {
+
+    /** Rig states worth reusing — a failed/cancelled rig is retried with a new (billed) task. */
+    private static final List<MeshyTaskStatus> REUSABLE_RIG_STATUSES = List.of(
+            MeshyTaskStatus.PENDING, MeshyTaskStatus.IN_PROGRESS, MeshyTaskStatus.SUCCEEDED);
 
     private final MeshyClient meshyClient;
     private final MeshyTaskRepository taskRepository;
@@ -115,6 +119,14 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     /** PBR map names served by the texture proxy (see fetchTexture). */
     private static final List<String> TEXTURE_MAPS = List.of("base_color", "metallic", "normal", "roughness", "emission");
+
+    /** Name prefix of Meshy animation/rig files cached in dtb_meshy_task_textures (see fetchAnimation). */
+    private static final String ANIM_CACHE_PREFIX = "anim_";
+
+    /** Meshy's limit for a retexture text_style_prompt (same as RetextureRequest's @Size). */
+    private static final int MAX_STYLE_PROMPT = 600;
+
+    private static final Set<String> IMAGE_EXTS = Set.of("png", "jpg", "jpeg", "webp");
 
     private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
 
@@ -428,9 +440,64 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     @Override
     @Transactional
+    public MeshyTaskResponse repaint(UUID sourceTaskId) {
+        ensureConfigured();
+        MeshyTask source = getTaskOrThrow(sourceTaskId);
+        // The repaired model (stored asset) goes up as a data URI; style = how the model looked.
+        SourceRef ref = resolveSource(sourceTaskId, null, null);
+        byte[] look = fetchThumbnailImage(sourceTaskId);
+        String styleImage = (look == null || look.length == 0) ? null : imageDataUri(look);
+        String prompt = blankToNull(source.getPrompt());
+        if (prompt != null && prompt.length() > MAX_STYLE_PROMPT) {
+            prompt = prompt.substring(0, MAX_STYLE_PROMPT);
+        }
+        if (styleImage == null && prompt == null) {
+            throw new BadRequestException("validation.style.required");
+        }
+        // Fresh UVs (enableOriginalUv=false): with the old ones a hole patch shares texels with its
+        // rim and could never get colours of its own.
+        var meshyRequest = new MeshyRetextureRequest(ref.inputTaskId(), ref.modelUrl(), prompt, styleImage,
+                null, true, false, List.of("glb"));
+        String meshyTaskId = meshyClient.createRetexture(meshyRequest);
+        MeshyTask task = newTask(MeshyTaskType.RETEXTURE, meshyTaskId, prompt, sourceTaskId);
+        task.setUserId(source.getUserId()); // the customer's model; no credits charged (staff step)
+        return persistAndMap(task);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MeshyTaskResponse latestRepaint(UUID sourceTaskId) {
+        return taskRepository
+                .findFirstByParentIdAndTaskTypeAndDeletedAtIsNullOrderByCreatedAtDesc(sourceTaskId, MeshyTaskType.RETEXTURE)
+                .map(taskMapper::toResponse)
+                .orElse(null);
+    }
+
+    /** data: URI for an image, typed from its magic bytes (PNG / WebP / else JPEG). */
+    private static String imageDataUri(byte[] img) {
+        boolean png = img.length > 3 && (img[0] & 0xFF) == 0x89 && img[1] == 'P' && img[2] == 'N';
+        boolean webp = img.length > 11 && img[8] == 'W' && img[9] == 'E' && img[10] == 'B' && img[11] == 'P';
+        String type = png ? "png" : webp ? "webp" : "jpeg";
+        return "data:image/" + type + ";base64," + Base64.getEncoder().encodeToString(img);
+    }
+
+    @Override
+    @Transactional
     public MeshyTaskResponse rig(RigRequest request) {
         ensureConfigured();
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
+        // The Creative Lab auto-rigs every model it opens: reuse a live rig of the same, unchanged
+        // model instead of charging again. A model edited after that rig gets a fresh one.
+        if (source.parentId() != null) {
+            Optional<MeshyTask> existing = taskRepository
+                    .findFirstByParentIdAndTaskTypeAndStatusInAndDeletedAtIsNullOrderByCreatedAtDesc(
+                            source.parentId(), MeshyTaskType.RIG, REUSABLE_RIG_STATUSES);
+            Instant sourceChangedAt = getTaskOrThrow(source.parentId()).getUpdatedAt();
+            if (existing.isPresent() && (sourceChangedAt == null
+                    || !sourceChangedAt.isAfter(existing.get().getCreatedAt()))) {
+                return taskMapper.toResponse(existing.get());
+            }
+        }
         BillingContext billing = beginBilling(MeshyTaskType.RIG);
         String meshyTaskId;
         try {
@@ -518,7 +585,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             model = objectStorage.get(existing.get().getStorageKey());
             inExt = existing.get().getFormat();
         } else {
-            model = downloadModel(task, "glb").bytes();
+            model = cachedMeshyModel(task, "glb").bytes();
             inExt = "glb";
         }
 
@@ -638,7 +705,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             model = objectStorage.get(existing.get().getStorageKey());
             inExt = existing.get().getFormat();
         } else {
-            model = downloadModel(task, "glb").bytes();
+            model = cachedMeshyModel(task, "glb").bytes();
             inExt = "glb";
         }
 
@@ -815,7 +882,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return new MeshyTaskService.ModelData(objectStorage.get(cached.getStorageKey()),
                     cached.getContentType(), "model." + cached.getExt());
         }
-        MeshyTaskService.ModelData fresh = downloadModel(task, fmt);
+        MeshyTaskService.ModelData fresh = downloadModelFromCdn(task, fmt);
         storeTexture(task.getId(), name, sourceKey, fresh.bytes(), fresh.contentType(), ext);
         return fresh;
     }
@@ -840,16 +907,42 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      */
     private boolean copyMeshyAssetsToR2(MeshyTask task) {
         boolean modelOk = assetRepository.existsById(task.getId()) || copyMeshyModelToR2(task);
-        for (String map : TEXTURE_MAPS) {
-            try {
-                fetchTexture(task.getId(), map); // caches into R2; a cache hit costs no download
-            } catch (AppException e) {
-                // map not produced for this task (404) or not downloadable — nothing to keep
-            } catch (RuntimeException e) {
-                log.warn("Could not store texture {} of task {} in R2: {}", map, task.getId(), e.getMessage());
+        // Every other format Meshy produced (fbx/obj/usdz/...), so no download ever needs the CDN.
+        List<String> formats = task.getModelUrls() != null ? List.copyOf(task.getModelUrls().keySet()) : List.of();
+        for (String fmt : formats) {
+            String url = task.getModelUrls().get(fmt);
+            if (url == null || url.isBlank()) {
+                continue;
+            }
+            // Same cache name as cachedMeshyModel; cachedRemote (not downloadModelFromCdn) so a missing
+            // secondary format can never mark the whole task EXPIRED.
+            String name = MODEL_CACHE_PREFIX + textureExt(url);
+            copyQuietly(task, name, () -> cachedRemote(task, name, "model",
+                    t -> t.getModelUrls() == null ? null : t.getModelUrls().get(fmt)));
+        }
+        int sets = task.getTextureUrls() != null ? task.getTextureUrls().size() : 0;
+        for (int set = 1; set <= sets; set++) {
+            for (String map : TEXTURE_MAPS) {
+                int s = set;
+                copyQuietly(task, "texture " + map, () -> fetchTexture(task.getId(), map, s));
             }
         }
+        List<String> animNames = task.getAnimationUrls() != null ? List.copyOf(task.getAnimationUrls().keySet()) : List.of();
+        for (String name : animNames) {
+            copyQuietly(task, ANIM_CACHE_PREFIX + name, () -> fetchAnimation(task.getId(), name));
+        }
         return modelOk;
+    }
+
+    /** Best-effort R2 copy (a cache hit costs no download); a file Meshy didn't produce is skipped. */
+    private void copyQuietly(MeshyTask task, String what, Runnable copy) {
+        try {
+            copy.run();
+        } catch (AppException e) {
+            // not produced for this task (404) or not downloadable -- nothing to keep
+        } catch (RuntimeException e) {
+            log.warn("Could not store {} of task {} in R2: {}", what, task.getId(), e.getMessage());
+        }
     }
 
     private boolean copyMeshyModelToR2(MeshyTask task) {
@@ -865,7 +958,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         if (alreadyCached) {
             return true;
         }
-        // Raw fetch, not downloadModel(): its 403/404 handling marks the task EXPIRED, which a
+        // Raw fetch, not downloadModelFromCdn(): its 403/404 handling marks the task EXPIRED, which a
         // best-effort copy must never do.
         byte[] bytes = tryFetchBytes(url);
         if (bytes == null) {
@@ -924,7 +1017,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
         Map<String, String> models = task.getModelUrls();
         if (models != null && models.get("usdz") != null) {
-            return downloadModel(task, "usdz");
+            return cachedMeshyModel(task, "usdz");
         }
         throw new ResourceNotFoundException("meshy.task.notFound");
     }
@@ -1093,96 +1186,95 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     @Override
     @Transactional
-    public MeshyTaskService.ModelData fetchTexture(UUID id, String map) {
-        MeshyTask task = getTaskOrThrow(id);
-        List<MeshyTextureDto> textures = task.getTextureUrls();
-        if (textures == null || textures.isEmpty()) {
-            throw new ResourceNotFoundException("meshy.task.notFound");
-        }
-        MeshyTextureDto tex = textures.get(0);
+    public MeshyTaskService.ModelData fetchTexture(UUID id, String map, int set) {
         String key = (map == null || map.isBlank()) ? "base_color" : map.toLowerCase();
-        String url = switch (key) {
+        // Set 1 keeps its historical cache name ("base_color"); later sets are prefixed ("s2_base_color").
+        String name = set <= 1 ? key : "s" + set + "_" + key;
+        return cachedRemote(getTaskOrThrow(id), name, "texture", t -> textureUrl(t, set, key));
+    }
+
+    /** Signed Meshy URL of one map of texture set {@code set} (1-based), or null. */
+    private static String textureUrl(MeshyTask task, int set, String map) {
+        List<MeshyTextureDto> textures = task.getTextureUrls();
+        if (textures == null || set < 1 || set > textures.size() || textures.get(set - 1) == null) {
+            return null;
+        }
+        MeshyTextureDto tex = textures.get(set - 1);
+        return switch (map) {
             case "metallic" -> tex.getMetallic();
             case "normal" -> tex.getNormal();
             case "roughness" -> tex.getRoughness();
             case "emission" -> tex.getEmission();
             default -> tex.getBaseColor();
         };
+    }
+
+    @Override
+    @Transactional
+    public MeshyTaskService.ModelData fetchAnimation(UUID id, String name) {
+        // Only keys Meshy actually returned resolve to a URL; anything else is a 404, never a fetch.
+        return cachedRemote(getTaskOrThrow(id), ANIM_CACHE_PREFIX + name, "animation",
+                t -> t.getAnimationUrls() == null ? null : t.getAnimationUrls().get(name));
+    }
+
+    /**
+     * R2-first copy of one Meshy-hosted file. Meshy URLs are presigned and expire, so every file
+     * is kept in R2 (row in dtb_meshy_task_textures, keyed by task + {@code name}) and the CDN is
+     * only hit to fill the cache: on a miss, with a fresh signed URL from Meshy if the stored one
+     * has expired. A re-generated file (different URL path) refreshes the cache; if the CDN
+     * fails, a stale cached copy is served rather than nothing.
+     */
+    private MeshyTaskService.ModelData cachedRemote(MeshyTask task, String name, String filePrefix,
+            Function<MeshyTask, String> urlOf) {
+        String url = urlOf.apply(task);
+        MeshyTaskTexture cached = textureRepository.findById(new MeshyTaskTextureId(task.getId(), name))
+                .orElse(null);
+        if (cached != null && (url == null || url.isBlank() || cached.getSourceKey().equals(stripQuery(url)))) {
+            return fromCache(cached, filePrefix);
+        }
         if (url == null || url.isBlank()) {
             throw new ResourceNotFoundException("meshy.task.notFound");
         }
-
-        // Cache lookup. Meshy CDN URLs are presigned and expire, so we key the cache on
-        // the URL
-        // path (without the signing query) — a stable fingerprint of the underlying
-        // image. A cache
-        // hit with a matching source key serves the stored bytes and skips the
-        // (expiry-prone) CDN.
-        String sourceKey = stripQuery(url);
-        MeshyTaskTexture cached = textureRepository
-                .findById(new MeshyTaskTextureId(id, key))
-                .orElse(null);
-        if (cached != null && cached.getSourceKey().equals(sourceKey)) {
-            return new MeshyTaskService.ModelData(
-                    objectStorage.get(cached.getStorageKey()), cached.getContentType(), "texture." + cached.getExt());
-        }
-
         byte[] bytes = tryFetchBytes(url);
         if (bytes == null && cached == null) {
-            // Expired signature on a task Meshy still keeps (~14 days): ask Meshy for fresh URLs
-            // (applyRemoteState stores them), then retry once. Same recovery as the thumbnail proxy.
-            String fresh = refreshedTextureUrl(task, key);
+            String fresh = refreshedUrl(task, urlOf);
             if (fresh != null) {
                 url = fresh;
-                sourceKey = stripQuery(url);
                 bytes = tryFetchBytes(url);
-            }
-            if (bytes == null) {
-                log.warn("Texture {} of task {} still unavailable after Meshy refresh (fresh url: {})",
-                        key, id, fresh != null);
             }
         }
         if (bytes == null) {
-            // CDN fetch failed (commonly an expired signature). Serve any stale cache we
-            // have
-            // rather than letting the viewer fall back to a grey, un-textured model.
             if (cached != null) {
-                log.warn("Texture fetch failed for task {} map {}; serving stale cache", id, key);
-                return new MeshyTaskService.ModelData(objectStorage.get(cached.getStorageKey()),
-                        cached.getContentType(), "texture." + cached.getExt());
+                log.warn("Meshy file {} of task {} unavailable; serving stale R2 copy", name, task.getId());
+                return fromCache(cached, filePrefix);
             }
+            log.warn("Meshy file {} of task {} unavailable and not in R2", name, task.getId());
             throw new UpstreamServiceException("meshy.upstreamError");
         }
-
         String ext = textureExt(url);
-        String contentType = "image/" + ("jpg".equals(ext) ? "jpeg" : ext);
-        storeTexture(id, key, sourceKey, bytes, contentType, ext);
-        return new MeshyTaskService.ModelData(bytes, contentType, "texture." + ext);
+        String contentType = IMAGE_EXTS.contains(ext) ? "image/" + ("jpg".equals(ext) ? "jpeg" : ext)
+                : contentTypeForModel(ext);
+        storeTexture(task.getId(), name, stripQuery(url), bytes, contentType, ext);
+        return new MeshyTaskService.ModelData(bytes, contentType, filePrefix + "." + ext);
     }
 
-    /** Re-fetch the task from Meshy and return the new signed URL of one map, or null. */
-    private String refreshedTextureUrl(MeshyTask task, String map) {
+    private MeshyTaskService.ModelData fromCache(MeshyTaskTexture cached, String filePrefix) {
+        return new MeshyTaskService.ModelData(objectStorage.get(cached.getStorageKey()),
+                cached.getContentType(), filePrefix + "." + cached.getExt());
+    }
+
+    /** Re-fetch the task from Meshy (applyRemoteState stores the new signed URLs) and re-resolve, or null. */
+    private String refreshedUrl(MeshyTask task, Function<MeshyTask, String> urlOf) {
         if (task.getMeshyTaskId() == null || task.getMeshyTaskId().startsWith("upload-")) {
             return null;
         }
         try {
             applyRemoteState(meshyClient.getTask(task.getTaskType(), task.getMeshyTaskId()));
         } catch (RuntimeException e) {
-            log.warn("Texture URL refresh from Meshy failed for task {}: {}", task.getId(), e.getMessage());
+            log.warn("URL refresh from Meshy failed for task {}: {}", task.getId(), e.getMessage());
             return null;
         }
-        List<MeshyTextureDto> textures = task.getTextureUrls();
-        if (textures == null || textures.isEmpty()) {
-            return null;
-        }
-        MeshyTextureDto tex = textures.get(0);
-        String url = switch (map) {
-            case "metallic" -> tex.getMetallic();
-            case "normal" -> tex.getNormal();
-            case "roughness" -> tex.getRoughness();
-            case "emission" -> tex.getEmission();
-            default -> tex.getBaseColor();
-        };
+        String url = urlOf.apply(task);
         return (url == null || url.isBlank()) ? null : url;
     }
 
@@ -1245,7 +1337,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                 throw new BadRequestException("meshy.export.resizeUnsupportedFormat");
             }
             requirePremiumMembership(userId);
-            MeshyTaskService.ModelData model = downloadModel(task, fmt);
+            MeshyTaskService.ModelData model = cachedMeshyModel(task, fmt);
             resized = MeshTransformer.resize(model.bytes(), fmt, heightMm,
                     origin == null ? ModelOrigin.BOTTOM : origin);
         }
@@ -1268,10 +1360,8 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     public void writeZip(ExportPrep prep, OutputStream out) throws IOException {
         MeshyTask task = prep.task();
         String fmt = prep.fmt();
-        String modelUrl = prep.resizedModel() == null ? resolveAssetUrl(task, fmt) : null;
-        if (prep.resizedModel() == null && modelUrl == null) {
-            throw new ResourceNotFoundException("meshy.task.notFound");
-        }
+        // Model bytes come from R2 (cachedMeshyModel), never straight from Meshy's expiring CDN links.
+        byte[] model = prep.resizedModel() != null ? prep.resizedModel() : cachedMeshyModel(task, fmt).bytes();
         // Don't close `out`: the servlet container owns the response stream.
         ZipOutputStream zip = new ZipOutputStream(out);
         // 3D meshes and texture images are already compressed; favour speed over ratio.
@@ -1290,16 +1380,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         String matName = "innerstyle";
 
         zip.putNextEntry(new ZipEntry("model." + ext));
-        if (objWithColor) {
-            byte[] objBytes = prep.resizedModel() != null
-                    ? prep.resizedModel()
-                    : fetchBytesOrThrow(modelUrl);
-            zip.write(bindMtlToObj(objBytes, "model.mtl", matName));
-        } else if (prep.resizedModel() != null) {
-            zip.write(prep.resizedModel());
-        } else {
-            streamRemoteInto(modelUrl, zip);
-        }
+        zip.write(objWithColor ? bindMtlToObj(model, "model.mtl", matName) : model);
         zip.closeEntry();
 
         if (objWithColor) {
@@ -1307,15 +1388,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
 
         if (textures != null && !textures.isEmpty()) {
-            int set = 1;
-            for (MeshyTextureDto tex : textures) {
+            // Every set from the R2 cache (fetchTexture); Meshy's presigned URLs expire.
+            for (int set = 1; set <= textures.size(); set++) {
                 String dir = multi ? "textures/set" + set + "/" : "textures/";
-                addTexture(zip, dir + "base_color", tex.getBaseColor());
-                addTexture(zip, dir + "metallic", tex.getMetallic());
-                addTexture(zip, dir + "normal", tex.getNormal());
-                addTexture(zip, dir + "roughness", tex.getRoughness());
-                addTexture(zip, dir + "emission", tex.getEmission());
-                set++;
+                for (String map : TEXTURE_MAPS) {
+                    addCachedTexture(zip, task.getId(), dir + map, map, set);
+                }
             }
         }
         zip.finish();
@@ -1363,53 +1441,20 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         }
     }
 
-    private byte[] fetchBytesOrThrow(String url) {
-        byte[] bytes = tryFetchBytes(url);
-        if (bytes == null) {
-            throw new UpstreamServiceException("meshy.upstreamError");
-        }
-        return bytes;
-    }
-
-    /**
-     * Stream a remote file straight into the open zip entry (no full in-memory
-     * copy).
-     */
-    private void streamRemoteInto(String url, OutputStream target) throws IOException {
+    /** Add one texture map from the R2 cache; a map the task doesn't have is skipped. */
+    private void addCachedTexture(ZipOutputStream zip, UUID taskId, String baseName, String map, int set)
+            throws IOException {
+        MeshyTaskService.ModelData data;
         try {
-            HttpResponse<InputStream> resp = MODEL_HTTP.send(
-                    HttpRequest.newBuilder(URI.create(url))
-                            .timeout(Duration.ofSeconds(120))
-                            .GET()
-                            .build(),
-                    HttpResponse.BodyHandlers.ofInputStream());
-            if (resp.statusCode() / 100 != 2) {
-                log.warn("Model fetch for zip failed ({}) for {}", resp.statusCode(), url);
-                throw new UpstreamServiceException("meshy.upstreamError");
-            }
-            try (InputStream in = resp.body()) {
-                in.transferTo(target);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted while streaming model", e);
-        }
-    }
-
-    /**
-     * Add one texture map to the zip. Textures are small, so we buffer and skip on
-     * failure.
-     */
-    private void addTexture(ZipOutputStream zip, String baseName, String url) throws IOException {
-        if (url == null || url.isBlank()) {
+            data = fetchTexture(taskId, map, set);
+        } catch (AppException e) {
+            return; // map not produced for this task, or not downloadable anywhere
+        } catch (RuntimeException e) { // R2 hiccup: ship the model without this map, like a CDN miss
+            log.warn("Texture {} of task {} unavailable for ZIP: {}", map, taskId, e.getMessage());
             return;
         }
-        byte[] bytes = tryFetchBytes(url);
-        if (bytes == null) {
-            return;
-        }
-        zip.putNextEntry(new ZipEntry(baseName + "." + textureExt(url)));
-        zip.write(bytes);
+        zip.putNextEntry(new ZipEntry(baseName + "." + textureExt(data.filename())));
+        zip.write(data.bytes());
         zip.closeEntry();
     }
 
@@ -1425,7 +1470,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         // Go through the R2-cached texture proxy: Meshy's CDN URL is presigned and expires, so a
         // raw fetch returns 403 on older tasks and the mesh op would export an untextured model.
         try {
-            return fetchTexture(task.getId(), "base_color").bytes();
+            return fetchTexture(task.getId(), "base_color", 1).bytes();
         } catch (AppException e) {
             return null; // no base-color map (or CDN + cache both unavailable)
         }
@@ -1462,7 +1507,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      * Resolve a task's asset URL and stream its bytes (server-side proxy, avoids
      * CDN CORS).
      */
-    private MeshyTaskService.ModelData downloadModel(MeshyTask task, String fmt) {
+    private MeshyTaskService.ModelData downloadModelFromCdn(MeshyTask task, String fmt) {
         String url = resolveAssetUrl(task, fmt);
         if (url == null) {
             throw new ResourceNotFoundException("meshy.task.notFound");
@@ -1621,7 +1666,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             return; // a local/edited asset already exists — never clobber it
         }
         try {
-            byte[] glb = downloadModel(task, "glb").bytes();
+            byte[] glb = cachedMeshyModel(task, "glb").bytes();
             byte[] stripped = meshToolRunner.stripGeneratedBase(glb, "glb", baseColorTextureBytes(task));
             storeAsset(task.getId(), stripped, "glb");
             pointModelAtAsset(task);

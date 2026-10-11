@@ -6,7 +6,11 @@ Usage:
     mesh_tools.py analyze <input>
         -> prints a JSON object describing printability.
     mesh_tools.py repair  <input> <output> [texturePath]
-        -> repairs the mesh (watertight) into <output>, prints {"before":..,"after":..}.
+        -> repairs the mesh (watertight) into <output>, prints {"before":..,"after":..,"attached":..}.
+           Every piece is repaired separately, loose junk is deleted, and detached parts are
+           snapped onto the body or joined by a strut, so the output is ONE printable solid.
+    mesh_tools.py selftest
+        -> asserts the repair pipeline on a synthetic model.
     mesh_tools.py base    <input> <output> [shape] [heightRatio] [marginRatio] [color] [sigSpec]
         -> adds a base under the model (optionally engraving a signature), prints {"ok":..}.
 
@@ -125,6 +129,197 @@ def _transfer_uv(src_vertices, src_uv, dst_vertices, dst_edges, decimals=5, pass
             grown[y[m]] = True
         known = grown
     return uv
+
+
+# Detached pieces closer than this (share of the model's bounding-box diagonal) are snapped onto
+# the body; farther ones get a strut. A floating piece would fall off the print otherwise.
+SNAP_GAP = 0.02
+SNAP_OVERLAP = 0.005
+STRUT_RADIUS = 0.012
+
+
+def _components(n_vertices, faces):
+    """Connected-component label per vertex (vectorised union-find: hook + pointer jumping)."""
+    e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]]])
+    lab = np.arange(n_vertices)
+    while True:
+        la, lb = lab[e[:, 0]], lab[e[:, 1]]
+        m = np.minimum(la, lb)
+        new = lab.copy()
+        np.minimum.at(new, la, m)
+        np.minimum.at(new, lb, m)
+        while True:
+            jumped = new[new]
+            if np.array_equal(jumped, new):
+                break
+            new = jumped
+        if np.array_equal(new, lab):
+            return lab
+        lab = new
+
+
+def _closest_pair(a, b, chunk=64):
+    """Closest vertex pair (distance, index in a, index in b) between two point sets: a coarse
+    strided pass, then an exact pass on the vertices near the coarse pair. Plain numpy, no KD-tree."""
+    def brute(ia, ib):
+        best = (np.inf, 0, 0)
+        pb = b[ib]
+        for s in range(0, len(ia), chunk):
+            d = np.linalg.norm(a[ia[s:s + chunk], None, :] - pb[None, :, :], axis=2)
+            i, j = np.unravel_index(np.argmin(d), d.shape)
+            if d[i, j] < best[0]:
+                best = (float(d[i, j]), int(ia[s + i]), int(ib[j]))
+        return best
+
+    gap, i, j = brute(np.arange(0, len(a), max(1, len(a) // 300)), np.arange(0, len(b), max(1, len(b) // 20000)))
+    # refine at full resolution around the coarse pair (the true closest pair is almost always there)
+    def nearest(pts, c, n):
+        d = np.linalg.norm(pts - c, axis=1)
+        return np.argpartition(d, n)[:n] if len(pts) > n else np.arange(len(pts))
+    return min(brute(nearest(a, a[i], 500), nearest(b, b[j], 20000)), (gap, i, j))
+
+
+def attach_parts(vertices, faces, uv=None):
+    """Join every detached piece to the main body, like a hand fix in Blender: a piece that almost
+    touches is moved onto the body (slight overlap), a far one gets a strut, then everything is
+    boolean-unioned (manifold3d) into ONE printable solid. UVs ride along as vertex properties.
+    Returns (vertices, faces, uv, report); on any failure the input is returned unchanged."""
+    V = np.asarray(vertices, np.float64)
+    F = np.asarray(faces, np.int64)
+    lab = _components(len(V), F)
+    roots, inv = np.unique(lab, return_inverse=True)
+    report = {"parts": int(len(roots)), "snapped": 0, "struts": 0}
+    if len(roots) < 2:
+        return vertices, faces, uv, report
+    try:
+        import manifold3d
+    except ImportError:
+        report["error"] = "manifold3d_missing"
+        return vertices, faces, uv, report
+
+    size = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0)))
+    face_part = inv[F[:, 0]]
+    vols = np.zeros(len(roots))
+    for k in range(len(roots)):
+        sub = F[face_part == k]
+        tri = V[sub]
+        vols[k] = abs(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum()) / 6.0
+    main = int(np.argmax(vols))
+    main_v = np.nonzero(inv == main)[0]
+    props = V if uv is None else np.hstack([V, uv])
+
+    def to_manifold(verts, tris):
+        m = manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(verts, np.float32),
+                                                tri_verts=np.asarray(tris, np.uint32)))
+        if m.status() != manifold3d.Error.NoError:
+            raise ValueError(f"not manifold: {m.status()}")
+        return m
+
+    def part_mesh(k, offset=np.zeros(3)):
+        idx = np.nonzero(inv == k)[0]
+        remap = np.full(len(V), -1)
+        remap[idx] = np.arange(len(idx))
+        pv = props[idx].copy()
+        pv[:, :3] += offset
+        return pv, remap[F[face_part == k]]
+
+    try:
+        solids = [to_manifold(*part_mesh(main))]
+        for k in range(len(roots)):
+            if k == main:
+                continue
+            idx = np.nonzero(inv == k)[0]
+            gap, ia, ib = _closest_pair(V[idx], V[main_v])
+            p, q = V[idx[ia]], V[main_v[ib]]
+            u = (q - p) / gap if gap > 0 else np.zeros(3)
+            part = to_manifold(*part_mesh(k))
+            if not (part ^ solids[0]).is_empty():  # already overlaps the body: just union it
+                solids.append(part)
+            elif gap <= SNAP_GAP * size:
+                solids.append(to_manifold(*part_mesh(k, (q - p) + u * SNAP_OVERLAP * size)))
+                report["snapped"] += 1
+            else:
+                solids.append(part)
+                r = STRUT_RADIUS * size
+                strut = trimesh.creation.cylinder(radius=r, segment=[p - u * 2 * r, q + u * 2 * r], sections=12)
+                sv = strut.vertices
+                if uv is not None:  # strut takes the colour where it meets the body
+                    sv = np.hstack([sv, np.repeat(uv[main_v[ib]][None, :], len(sv), axis=0)])
+                solids.append(to_manifold(sv, strut.faces))
+                report["struts"] += 1
+        out = manifold3d.Manifold.batch_boolean(solids, manifold3d.OpType.Add).to_mesh()
+    except Exception as exc:  # noqa: BLE001 -- keep the separate (still watertight) parts
+        report["error"] = str(exc)[:200]
+        return vertices, faces, uv, report
+    vp = np.asarray(out.vert_properties, np.float64)
+    return vp[:, :3], np.asarray(out.tri_verts, np.int64), (vp[:, 3:5] if uv is not None else None), report
+
+
+# Loose pieces smaller than this (share of the model's bounding-box diagonal) are scan/AI junk,
+# deleted like a manual "select loose -> delete" pass rather than strutted onto the body.
+JUNK_SIZE = 0.01
+
+
+def repair_pieces(mesh):
+    """Repair each connected piece on its own and keep all of them. pymeshfix on the whole model
+    can silently drop separate closed parts (eyes, hats) even with remove_smallest_components=False.
+    Already-watertight pieces are left untouched; holes are filled by pymeshfix the way you would by
+    hand in Blender (fill -> refine -> fair to the surrounding curvature). Returns (mesh, junk)."""
+    V = np.asarray(mesh.vertices, np.float64)
+    F = np.asarray(mesh.faces, np.int64)
+    size = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0)))
+    lab = _components(len(V), F)
+    roots, inv = np.unique(lab, return_inverse=True)
+    face_part = inv[F[:, 0]]
+    out_v, out_f, offset, junk = [], [], 0, 0
+    for k in range(len(roots)):
+        idx = np.nonzero(inv == k)[0]
+        sub = F[face_part == k]
+        pv = V[idx]
+        if len(sub) < 4 or np.linalg.norm(pv.max(axis=0) - pv.min(axis=0)) < JUNK_SIZE * size:
+            junk += 1
+            continue
+        remap = np.full(len(V), -1)
+        remap[idx] = np.arange(len(idx))
+        piece = trimesh.Trimesh(pv, remap[sub], process=False)
+        if not piece.is_watertight:
+            fixer = pymeshfix.MeshFix(piece.vertices, piece.faces)
+            fixer.repair(joincomp=True, remove_smallest_components=False)
+            if len(fixer.faces) == 0:
+                junk += 1
+                continue
+            piece = trimesh.Trimesh(fixer.points, fixer.faces, process=False)
+        out_v.append(piece.vertices)
+        out_f.append(piece.faces + offset)
+        offset += len(piece.vertices)
+    if not out_f:
+        raise ValueError("nothing left to repair")
+    return trimesh.Trimesh(np.vstack(out_v), np.vstack(out_f), process=False), junk
+
+
+def _welded(mesh):
+    """Geometry-only copy with vertices welded by position: UV seams split vertices, which would
+    otherwise read as open edges/holes in analyze() even on a watertight solid."""
+    m = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
+    m.merge_vertices(merge_tex=True, merge_norm=True)
+    return m
+
+
+def _selftest():
+    """python3 mesh_tools.py selftest -- holed body + near/far/overlapping parts + junk -> one solid."""
+    body = trimesh.creation.icosphere(3)
+    body = trimesh.Trimesh(body.vertices, body.faces[body.triangles_center[:, 0] < 0.85])
+    parts = [body]
+    for r, at in ((0.1, [0.3, 0, 1.08]), (0.2, [0, 0, 1.6]), (0.15, [-0.9, 0, 0.3]), (0.005, [2, 2, 2])):
+        p = trimesh.creation.icosphere(2, radius=r)
+        p.apply_translation(at)
+        parts.append(p)
+    fixed, junk = repair_pieces(trimesh.util.concatenate(parts))
+    v, f, _, rep = attach_parts(fixed.vertices, fixed.faces)
+    out = _welded(trimesh.Trimesh(v, f, process=False))
+    assert junk == 1 and rep["snapped"] == 1 and rep["struts"] == 1, (junk, rep)
+    assert out.is_watertight and out.body_count == 1, "expected one watertight solid"
+    print(json.dumps({"ok": True, "report": rep, "junk": junk}))
 
 
 def count_holes(boundary_edges):
@@ -873,6 +1068,9 @@ def strip_generated_base(src, out, texture_path=None):
 
 
 def main():
+    if sys.argv[1:2] == ["selftest"]:
+        _selftest()
+        return
     if len(sys.argv) < 3:
         print(json.dumps({"error": "usage: mesh_tools.py <analyze|repair|base|strip|debase> <input> [output]"}))
         sys.exit(2)
@@ -972,16 +1170,14 @@ def main():
             sys.exit(1)
         before = analyze(mesh)
         try:
-            fixer = pymeshfix.MeshFix(mesh.vertices.astype(np.float64), mesh.faces)
-            fixer.repair()
-            fixed = trimesh.Trimesh(vertices=fixer.points, faces=fixer.faces, process=False)
+            fixed, junk = repair_pieces(mesh)
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"error": "repair_failed", "detail": str(exc)}))
             sys.exit(1)
         # Drop pymeshfix's own workspace and the pre-repair mesh before the texture pass -- neither
         # is needed past this point, and freeing them first keeps the nearest-neighbour transfer's
         # peak memory from stacking on top of pymeshfix's.
-        del fixer, mesh
+        del mesh
         gc.collect()
 
         # pymeshfix rebuilds vertices/faces from scratch and carries no colour with them — without
@@ -989,18 +1185,23 @@ def main():
         # geometry fix was. Re-attach the source texture via nearest-neighbour UV transfer.
         # Best-effort: any failure here just exports untextured, same as before this fix, rather
         # than failing the whole repair over a colour problem.
+        uv = None
         try:
             if src_uv is not None and len(src_v) > 0:
                 uv = _transfer_uv(src_v, src_uv, fixed.vertices, fixed.edges_unique)
-                fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)  # dom may be None
         except Exception:  # noqa: BLE001
-            pass
+            uv = None
+        # Detached pieces (kept by repair) would fall off the print: snap/strut them onto the body.
+        verts, tris, uv, attached = attach_parts(fixed.vertices, fixed.faces, uv)
+        fixed = trimesh.Trimesh(vertices=verts, faces=tris, process=False)
+        if uv is not None:
+            fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)  # dom may be None
         del scene, src_v, src_uv
         gc.collect()
 
         fixed.merge_vertices()
         fixed.export(out)
-        print(json.dumps({"before": before, "after": analyze(fixed)}))
+        print(json.dumps({"before": before, "after": analyze(_welded(fixed)), "attached": {**attached, "removedJunk": junk}}))
         return
 
     try:

@@ -9,6 +9,7 @@ import com.innerstyle.meshy.client.dto.MeshyTaskDto;
 import com.innerstyle.meshy.config.MeshyProperties;
 import com.innerstyle.meshy.dto.request.AnimateRequest;
 import com.innerstyle.meshy.dto.request.ImageTo3dRequest;
+import com.innerstyle.meshy.dto.request.RigRequest;
 import com.innerstyle.meshy.dto.response.MeshyTaskResponse;
 import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
@@ -107,6 +108,35 @@ class MeshyTaskServiceImplTest {
     }
 
     @Test
+    void rigReusesExistingRigOfUnchangedModelWithoutCharging() {
+        UUID sourceId = UUID.randomUUID();
+        MeshyTask source = new MeshyTask();
+        source.setId(sourceId);
+        source.setMeshyTaskId("meshy-src");
+        source.setTaskType(MeshyTaskType.IMAGE_TO_3D);
+        source.setStatus(MeshyTaskStatus.SUCCEEDED);
+        source.setUpdatedAt(java.time.Instant.parse("2026-09-01T00:00:00Z"));
+        MeshyTask rig = new MeshyTask();
+        rig.setTaskType(MeshyTaskType.RIG);
+        rig.setStatus(MeshyTaskStatus.SUCCEEDED);
+        rig.setCreatedAt(java.time.Instant.parse("2026-09-02T00:00:00Z"));
+        MeshyTaskResponse reused = new MeshyTaskResponse(UUID.randomUUID(), "meshy-rig",
+            MeshyTaskType.RIG, MeshyTaskStatus.SUCCEEDED, 100, sourceId, null,
+            null, null, null, null, null, null, null, null, null, null);
+        when(taskRepository.findById(sourceId)).thenReturn(Optional.of(source));
+        when(assetRepository.findById(sourceId)).thenReturn(Optional.empty());
+        when(taskRepository.findFirstByParentIdAndTaskTypeAndStatusInAndDeletedAtIsNullOrderByCreatedAtDesc(
+            any(), any(), any())).thenReturn(Optional.of(rig));
+        when(taskMapper.toResponse(rig)).thenReturn(reused);
+
+        MeshyTaskResponse result = service.rig(new RigRequest(sourceId, null, 1.7));
+
+        assertThat(result).isSameAs(reused);
+        org.mockito.Mockito.verifyNoInteractions(meshyClient);
+        org.mockito.Mockito.verify(taskRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
     void animateRejectsRigTaskThatIsNotSucceeded() {
         UUID rigId = UUID.randomUUID();
         MeshyTask rig = new MeshyTask();
@@ -155,6 +185,45 @@ class MeshyTaskServiceImplTest {
         assertThat(task.getProgress()).isEqualTo(100);
         assertThat(task.getModelUrls()).containsEntry("glb", "https://example.com/model.glb");
         assertThat(task.getConsumedCredits()).isEqualTo(30);
+    }
+
+    @Test
+    void fetchTextureServesSecondSetFromR2WithoutTouchingCdn() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        var set1 = new com.innerstyle.meshy.client.dto.MeshyTextureDto("https://cdn.invalid/a/base.png?sig=1", null, null, null, null);
+        var set2 = new com.innerstyle.meshy.client.dto.MeshyTextureDto("https://cdn.invalid/b/base.png?sig=expired", null, null, null, null);
+        task.setTextureUrls(List.of(set1, set2));
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        var cached = new com.innerstyle.meshy.entity.MeshyTaskTexture();
+        cached.setTaskId(id);
+        cached.setMapName("s2_base_color");
+        cached.setSourceKey("https://cdn.invalid/b/base.png");
+        cached.setContentType("image/png");
+        cached.setExt("png");
+        cached.setStorageKey("tasks/" + id + "/tex/s2.png");
+        when(textureRepository.findById(new com.innerstyle.meshy.entity.MeshyTaskTextureId(id, "s2_base_color")))
+            .thenReturn(Optional.of(cached));
+        when(objectStorage.get("tasks/" + id + "/tex/s2.png")).thenReturn(new byte[] {7});
+
+        var result = service.fetchTexture(id, "base_color", 2);
+
+        assertThat(result.bytes()).containsExactly(7);
+        assertThat(result.filename()).isEqualTo("texture.png");
+    }
+
+    @Test
+    void fetchAnimationRejectsNameMeshyDidNotReturn() {
+        UUID id = UUID.randomUUID();
+        MeshyTask task = new MeshyTask();
+        task.setId(id);
+        task.setAnimationUrls(Map.of("walkingGlbUrl", "https://cdn.invalid/walk.glb"));
+        when(taskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        assertThatThrownBy(() -> service.fetchAnimation(id, "../../etc"))
+            .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test

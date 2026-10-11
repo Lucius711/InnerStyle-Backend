@@ -181,9 +181,29 @@ public interface MeshyTaskService {
      * the in-browser viewer can't apply them. The frontend loads the map through this proxy and
      * assigns it to the model's material.
      *
+     * Served from R2; Meshy's CDN is only used once to fill the cache.
+     *
      * @param map which map (defaults to {@code base_color})
+     * @param set 1-based texture set (Meshy can return several)
      */
-    ModelData fetchTexture(UUID id, String map);
+    ModelData fetchTexture(UUID id, String map, int set);
+
+    /**
+     * Staff: let Meshy's AI paint the model again (Retexture with fresh UVs), styled on the task's
+     * original look (its thumbnail + prompt), so hole patches get plausible detail -- e.g. a
+     * patched eye is drawn as an eye. Creates a RETEXTURE child task owned by the model's owner;
+     * free, as it is a fulfilment step.
+     */
+    MeshyTaskResponse repaint(UUID sourceTaskId);
+
+    /** Newest repaint (RETEXTURE child) of a task, or null when none was started. */
+    MeshyTaskResponse latestRepaint(UUID sourceTaskId);
+
+    /**
+     * Same-origin, R2-cached copy of one animation/rig output (key of the task's animationUrls,
+     * e.g. {@code walkingGlbUrl}), so downloads never depend on Meshy's expiring links.
+     */
+    ModelData fetchAnimation(UUID id, String name);
 
     /**
      * Validate an export the given user owns and prepare it for streaming. Runs in the request

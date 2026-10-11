@@ -46,6 +46,10 @@ public class PrintOrder {
     @Column(name = "source_task_id")
     private UUID sourceTaskId;
 
+    /** Source task before a staff AI repaint was applied (to undo it); null = no repaint applied. */
+    @Column(name = "repaint_source_task_id")
+    private UUID repaintSourceTaskId;
+
     /** Chosen figurine height in cm (drives the price). */
     @Column(name = "size_cm")
     private Integer sizeCm;

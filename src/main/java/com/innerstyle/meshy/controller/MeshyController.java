@@ -306,12 +306,25 @@ public class MeshyController {
                 meshyTaskService.replaceModel(id, principal.getId(), glb));
     }
 
+    @GetMapping("/tasks/{id}/animation")
+    @Operation(summary = "Download one animation/rig output (R2-cached copy of the Meshy file)")
+    public ResponseEntity<byte[]> getTaskAnimation(@PathVariable UUID id, @RequestParam String name) {
+        MeshyTaskService.ModelData file = meshyTaskService.fetchAnimation(id, name);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, file.contentType())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "." + file.filename()
+                        .substring(file.filename().lastIndexOf('.') + 1) + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")
+                .body(file.bytes());
+    }
+
     @GetMapping("/tasks/{id}/texture")
     @Operation(summary = "Stream a task's texture map same-origin (so the in-browser viewer can apply "
             + "it; the Meshy CDN lacks CORS headers). Defaults to the base color map.")
     public ResponseEntity<byte[]> getTaskTexture(@PathVariable UUID id,
-            @RequestParam(required = false, defaultValue = "base_color") String map) {
-        MeshyTaskService.ModelData texture = meshyTaskService.fetchTexture(id, map);
+            @RequestParam(required = false, defaultValue = "base_color") String map,
+            @RequestParam(required = false, defaultValue = "1") int set) {
+        MeshyTaskService.ModelData texture = meshyTaskService.fetchTexture(id, map, set);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, texture.contentType())
                 .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")

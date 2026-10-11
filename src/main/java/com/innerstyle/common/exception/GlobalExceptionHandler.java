@@ -9,6 +9,7 @@ import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
@@ -120,6 +121,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({ClientAbortException.class, AsyncRequestNotUsableException.class})
     public void handleClientDisconnect(Exception ex) {
         log.debug("Client aborted the response: {}", ex.getMessage());
+    }
+
+    /** {@code @PreAuthorize} denials surface here (not in the filter chain): answer 403, same code as RestAccessDeniedHandler. */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+        log.warn("Access denied: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+            .body(ErrorResponse.simple("auth.forbidden", HttpStatus.FORBIDDEN.getReasonPhrase()));
     }
 
     @ExceptionHandler(Exception.class)
