@@ -188,16 +188,6 @@ public interface MeshyTaskService {
      */
     ModelData fetchTexture(UUID id, String map, int set);
 
-    /**
-     * Staff: let Meshy's AI paint the model again (Retexture with fresh UVs), styled on the task's
-     * original look (its thumbnail + prompt), so hole patches get plausible detail -- e.g. a
-     * patched eye is drawn as an eye. Creates a RETEXTURE child task owned by the model's owner;
-     * free, as it is a fulfilment step.
-     */
-    MeshyTaskResponse repaint(UUID sourceTaskId);
-
-    /** Newest repaint (RETEXTURE child) of a task, or null when none was started. */
-    MeshyTaskResponse latestRepaint(UUID sourceTaskId);
 
     /**
      * Same-origin, R2-cached copy of one animation/rig output (key of the task's animationUrls,

@@ -5,7 +5,6 @@ import com.innerstyle.meshy.dto.response.PrintabilityResponse;
 import com.innerstyle.meshy.dto.response.RepairResponse;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.print.dto.request.UpdateOrderStatusRequest;
-import com.innerstyle.print.dto.response.RepaintStatusResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import com.innerstyle.print.service.StaffOrderService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -97,31 +96,6 @@ public class StaffOrderController {
     @PostMapping("/{id}/repair")
     public ApiResponse<RepairResponse> repair(@PathVariable UUID id) {
         return ApiResponse.success("staff.order.repaired", staffOrderService.repairModel(id));
-    }
-
-    @Operation(summary = "AI-repaint the order's model (Meshy Retexture) in the style of its original look, "
-            + "so repaired holes get plausible colour/detail. Async: poll GET /{id}/repaint.")
-    @PostMapping("/{id}/repaint")
-    public ApiResponse<RepaintStatusResponse> startRepaint(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaintStarted", staffOrderService.startRepaint(id));
-    }
-
-    @Operation(summary = "Latest AI repaint of the order's model and whether it is applied")
-    @GetMapping("/{id}/repaint")
-    public ApiResponse<RepaintStatusResponse> repaintStatus(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaintStatus", staffOrderService.repaintStatus(id));
-    }
-
-    @Operation(summary = "Print the finished AI repaint for this order (undoable)")
-    @PostMapping("/{id}/repaint/apply")
-    public ApiResponse<RepaintStatusResponse> applyRepaint(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaintApplied", staffOrderService.applyRepaint(id));
-    }
-
-    @Operation(summary = "Undo an applied AI repaint (back to the previous model)")
-    @PostMapping("/{id}/repaint/undo")
-    public ApiResponse<RepaintStatusResponse> undoRepaint(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaintUndone", staffOrderService.undoRepaint(id));
     }
 
     @Operation(summary = "Revert the order's model back to its pre-repair backup, if one exists. "

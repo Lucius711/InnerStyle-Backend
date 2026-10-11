@@ -22,8 +22,8 @@ Notes:
   normals/UVs, which would otherwise make every edge look like a boundary.
 - "holes" counts connected boundary loops; "nonManifoldEdges" counts edges shared by >2 faces.
 - repair rebuilds the mesh's vertices/faces from scratch (pymeshfix), which drops all colour —
-  the texture is re-attached afterwards by matching the repaired vertices back to the pre-repair
-  ones (_transfer_uv), or the "repaired" model would export as a plain grey/white lump.
+  the texture is re-attached afterwards per face corner from the matching original face
+  (_transfer_face_uv; seam-safe), or the "repaired" model would export as a plain grey/white lump.
   Best-effort: any failure just exports untextured.
 """
 
@@ -40,7 +40,9 @@ def load(path):
     mesh = trimesh.load(path, force="mesh")
     if isinstance(mesh, trimesh.Scene):
         mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
-    mesh.merge_vertices()
+    # Weld by position only: texture seams split vertices (same point, different UV), which
+    # would otherwise count as holes -- a repaired, watertight model re-checked as "1600 holes".
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
     return mesh
 
 
@@ -56,33 +58,74 @@ def _load_scene_with_texture(path):
     return scene, dom
 
 
-def _combined_vertices_uv(scene):
-    """Flatten every geometry in `scene` into one (vertices, uv-or-None) pair, in the scene's own
-    per-geometry vertex order. trimesh.util.concatenate drops UVs when geometries don't share one
-    visual type (a Meshy figure's body/hair/clothes primitives usually don't), so this is done by
-    hand instead. Only UV-mapped geometries contribute; UV-less ones (e.g. our vertex-coloured
-    base) are skipped instead of disabling the whole transfer. `uv` is None if no geometry has UVs."""
-    verts, uvs = [], []
+def _corner_key(corner_pos, decimals=5):
+    """Order-independent key per triangle from its 3 corner positions (rounded), plus the sort
+    permutation that maps sorted slot -> original corner index."""
+    q = np.round(np.asarray(corner_pos, np.float64) * 10 ** decimals).astype(np.int64)  # (F,3,3)
+    # lexicographic (x, y, z) sort of each face's 3 corners: stable sorts by z, then y, then x
+    perm = np.argsort(q[:, :, 2], axis=1, kind="stable")
+    perm = np.take_along_axis(perm, np.argsort(np.take_along_axis(q[:, :, 1], perm, 1), axis=1, kind="stable"), 1)
+    perm = np.take_along_axis(perm, np.argsort(np.take_along_axis(q[:, :, 0], perm, 1), axis=1, kind="stable"), 1)
+    sq = np.take_along_axis(q, perm[:, :, None], 1).reshape(len(q), 9)
+    return np.ascontiguousarray(sq).view(np.dtype((np.void, 72))).ravel(), perm
+
+
+def _scene_corner_uvs(scene):
+    """(corner positions (F,3,3), corner UVs (F,3,2)) of every UV-mapped geometry, unwelded, so a
+    vertex on a texture seam keeps a different UV in each face around it."""
+    pos, uvs = [], []
     for geom in scene.geometry.values():
-        v = np.asarray(geom.vertices)
         uv = getattr(getattr(geom, "visual", None), "uv", None)
-        if uv is not None and len(uv) == len(v):
-            verts.append(v)
-            uvs.append(np.asarray(uv))
+        if uv is not None and len(uv) == len(geom.vertices):
+            f = np.asarray(geom.faces)
+            pos.append(np.asarray(geom.vertices)[f])
+            uvs.append(np.asarray(uv)[f])
     if not uvs:
-        return np.zeros((0, 3)), None
-    return np.concatenate(verts, axis=0), np.concatenate(uvs, axis=0)
+        return None, None
+    return np.concatenate(pos), np.concatenate(uvs)
 
 
-def _dedupe_points(points, values, decimals=5):
-    """Collapse near-duplicate 3D points (e.g. per-face-corner vertex splits for UVs/normals in a
-    GLB export) down to one representative each, keeping whichever duplicate's row in `values` is
-    kept. Shrinks a nearest-neighbour search space back toward the mesh's true (welded) vertex
-    count instead of its export-inflated one."""
-    if len(points) == 0:
-        return points, values
-    _, idx = np.unique(np.round(points, decimals), axis=0, return_index=True)
-    return points[idx], values[idx]
+def _transfer_face_uv(src_corner_pos, src_corner_uv, vertices, faces):
+    """UVs per face corner for the repaired mesh, copied from the matching original face.
+
+    Per-vertex UV transfer breaks on texture seams: one position has a different UV in each
+    island, so a single UV per vertex stretches triangles across the atlas (colour shards).
+    Faces repair left untouched get their original corner UVs back exactly. New faces (hole
+    patches) get ONE UV for all three corners -- the rim colour as a flat fill -- so they can
+    never stretch across islands. Returns (vertices, faces, uv) with seam vertices split."""
+    V = np.asarray(vertices, np.float64)
+    F = np.asarray(faces, np.int64)
+    skey, sperm = _corner_key(src_corner_pos)
+    dkey, dperm = _corner_key(V[F])
+    src_sorted_uv = np.take_along_axis(src_corner_uv, sperm[:, :, None], 1)
+    order = np.argsort(skey, kind="stable")
+    pos = np.clip(np.searchsorted(skey[order], dkey), 0, len(skey) - 1)
+    hit = skey[order][pos] == dkey
+    uv = np.zeros((len(F), 3, 2))
+    matched = src_sorted_uv[order[pos[hit]]]
+    tmp = np.zeros_like(matched)
+    np.put_along_axis(tmp, dperm[hit][:, :, None], matched, 1)  # back to this face's corner order
+    uv[hit] = tmp
+
+    # one representative UV per vertex (from any matched corner), grown across patch interiors
+    rep = np.full((len(V), 2), np.nan)
+    rep[F[hit].ravel()] = uv[hit].reshape(-1, 2)
+    e = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    for _ in range(64):
+        missing = np.isnan(rep[:, 0])
+        if not missing.any():
+            break
+        for a, b in ((e[:, 0], e[:, 1]), (e[:, 1], e[:, 0])):
+            m = missing[b] & ~np.isnan(rep[a, 0])
+            rep[b[m]] = rep[a[m]]
+    rep = np.nan_to_num(rep)
+    first = F[~hit][:, 0]
+    uv[~hit] = rep[first][:, None, :]
+
+    # split vertices where corners disagree on UV (seams); identical (vertex, uv) pairs stay shared
+    corner = np.column_stack([F.reshape(-1, 1).astype(np.float64), np.round(uv.reshape(-1, 2), 7)])
+    uniq, inv = np.unique(corner, axis=0, return_inverse=True)
+    return V[uniq[:, 0].astype(np.int64)], inv.reshape(-1, 3), uniq[:, 1:]
 
 
 def _mesh_from_scene(scene):
@@ -103,32 +146,6 @@ def _mesh_from_scene(scene):
     )
     mesh.merge_vertices()
     return mesh
-
-
-def _transfer_uv(src_vertices, src_uv, dst_vertices, dst_edges, decimals=5, passes=16):
-    """pymeshfix keeps the original vertex positions and only adds a few for hole fills, so match
-    positions exactly (sort + searchsorted, O(n log n): ~1.5s at 700k vertices) and let each added
-    vertex inherit the UV of an already-matched neighbour along the mesh edges."""
-    dt = np.dtype([("x", "f8"), ("y", "f8"), ("z", "f8")])
-    src = np.ascontiguousarray(np.round(np.asarray(src_vertices, np.float64), decimals)).view(dt).ravel()
-    dst = np.ascontiguousarray(np.round(np.asarray(dst_vertices, np.float64), decimals)).view(dt).ravel()
-    order = np.argsort(src, kind="mergesort")
-    sorted_src = src[order]
-    pos = np.clip(np.searchsorted(sorted_src, dst), 0, len(src) - 1)
-    known = sorted_src[pos] == dst
-    uv = np.zeros((len(dst), src_uv.shape[1]), dtype=src_uv.dtype)
-    uv[known] = src_uv[order[pos[known]]]
-    a, b = dst_edges[:, 0], dst_edges[:, 1]
-    for _ in range(passes):
-        if known.all():
-            break
-        grown = known.copy()
-        for x, y in ((a, b), (b, a)):
-            m = known[x] & ~known[y]
-            uv[y[m]] = uv[x[m]]
-            grown[y[m]] = True
-        known = grown
-    return uv
 
 
 # Detached pieces closer than this (share of the model's bounding-box diagonal) are snapped onto
@@ -186,7 +203,10 @@ def attach_parts(vertices, faces, uv=None):
     Returns (vertices, faces, uv, report); on any failure the input is returned unchanged."""
     V = np.asarray(vertices, np.float64)
     F = np.asarray(faces, np.int64)
-    lab = _components(len(V), F)
+    # UV seams split vertices; find parts on position-welded topology, not on texture islands
+    _, weld = np.unique(np.round(V, 6), axis=0, return_inverse=True)
+    weld = weld.ravel()
+    lab = _components(weld.max() + 1, weld[F])[weld]
     roots, inv = np.unique(lab, return_inverse=True)
     report = {"parts": int(len(roots)), "snapped": 0, "struts": 0}
     if len(roots) < 2:
@@ -209,8 +229,10 @@ def attach_parts(vertices, faces, uv=None):
     props = V if uv is None else np.hstack([V, uv])
 
     def to_manifold(verts, tris):
-        m = manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(verts, np.float32),
-                                                tri_verts=np.asarray(tris, np.uint32)))
+        mesh = manifold3d.Mesh(vert_properties=np.asarray(verts, np.float32),
+                               tri_verts=np.asarray(tris, np.uint32))
+        mesh.merge()  # stitch seam-split vertices (same position, different UV) for the boolean
+        m = manifold3d.Manifold(mesh)
         if m.status() != manifold3d.Error.NoError:
             raise ValueError(f"not manifold: {m.status()}")
         return m
@@ -1161,9 +1183,7 @@ def main():
                     dom = Image.open(texture_path).convert("RGBA")
                 except Exception:  # noqa: BLE001 -- unreadable map just means "no embed"
                     dom = None
-            src_v, src_uv = _combined_vertices_uv(scene)
-            if src_uv is not None:
-                src_v, src_uv = _dedupe_points(src_v, src_uv)
+            src_pos, src_uv = _scene_corner_uvs(scene)
             mesh = _mesh_from_scene(scene)
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"error": "load_failed", "detail": str(exc)}))
@@ -1181,22 +1201,21 @@ def main():
         gc.collect()
 
         # pymeshfix rebuilds vertices/faces from scratch and carries no colour with them — without
-        # this, every repaired model exports as a flat grey/white lump regardless of how good the
-        # geometry fix was. Re-attach the source texture via nearest-neighbour UV transfer.
-        # Best-effort: any failure here just exports untextured, same as before this fix, rather
-        # than failing the whole repair over a colour problem.
-        uv = None
+        # this, every repaired model exports as a flat grey/white lump. Re-attach the texture per
+        # face corner (seam-safe, see _transfer_face_uv). Best-effort: a failure exports untextured
+        # rather than failing the whole repair over a colour problem.
+        verts, tris, uv = fixed.vertices, fixed.faces, None
         try:
-            if src_uv is not None and len(src_v) > 0:
-                uv = _transfer_uv(src_v, src_uv, fixed.vertices, fixed.edges_unique)
+            if src_uv is not None:
+                verts, tris, uv = _transfer_face_uv(src_pos, src_uv, fixed.vertices, fixed.faces)
         except Exception:  # noqa: BLE001
-            uv = None
+            verts, tris, uv = fixed.vertices, fixed.faces, None
         # Detached pieces (kept by repair) would fall off the print: snap/strut them onto the body.
-        verts, tris, uv, attached = attach_parts(fixed.vertices, fixed.faces, uv)
+        verts, tris, uv, attached = attach_parts(verts, tris, uv)
         fixed = trimesh.Trimesh(vertices=verts, faces=tris, process=False)
         if uv is not None:
             fixed.visual = trimesh.visual.TextureVisuals(uv=uv, image=dom)  # dom may be None
-        del scene, src_v, src_uv
+        del scene, src_pos, src_uv
         gc.collect()
 
         fixed.merge_vertices()

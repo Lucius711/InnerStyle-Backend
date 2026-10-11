@@ -3,7 +3,6 @@ package com.innerstyle.print.service;
 import com.innerstyle.meshy.dto.response.PrintabilityResponse;
 import com.innerstyle.meshy.dto.response.RepairResponse;
 import com.innerstyle.meshy.service.MeshyTaskService;
-import com.innerstyle.print.dto.response.RepaintStatusResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -40,17 +39,6 @@ public interface StaffOrderService {
      */
     RepairResponse revertModel(UUID orderId);
 
-    /** Start an AI repaint (Meshy Retexture) of the order's model, styled on its original look. */
-    RepaintStatusResponse startRepaint(UUID orderId);
-
-    /** Latest repaint of the order's model and whether it is the one being printed. */
-    RepaintStatusResponse repaintStatus(UUID orderId);
-
-    /** Print the finished repaint from now on (the previous model is kept for undo). */
-    RepaintStatusResponse applyRepaint(UUID orderId);
-
-    /** Go back to the model the order had before the repaint was applied. */
-    RepaintStatusResponse undoRepaint(UUID orderId);
 
     /**
      * Fetch a fresh thumbnail image for the order's model, proxied through the server so

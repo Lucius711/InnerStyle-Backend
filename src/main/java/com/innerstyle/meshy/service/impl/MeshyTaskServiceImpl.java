@@ -123,9 +123,6 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     /** Name prefix of Meshy animation/rig files cached in dtb_meshy_task_textures (see fetchAnimation). */
     private static final String ANIM_CACHE_PREFIX = "anim_";
 
-    /** Meshy's limit for a retexture text_style_prompt (same as RetextureRequest's @Size). */
-    private static final int MAX_STYLE_PROMPT = 600;
-
     private static final Set<String> IMAGE_EXTS = Set.of("png", "jpg", "jpeg", "webp");
 
     private static final Set<String> ALLOWED_MODEL_EXTS = Set.of("glb", "gltf", "obj", "fbx", "stl");
@@ -436,49 +433,6 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
                 source.parentId());
         applyBilling(task, billing);
         return persistAndMap(task);
-    }
-
-    @Override
-    @Transactional
-    public MeshyTaskResponse repaint(UUID sourceTaskId) {
-        ensureConfigured();
-        MeshyTask source = getTaskOrThrow(sourceTaskId);
-        // The repaired model (stored asset) goes up as a data URI; style = how the model looked.
-        SourceRef ref = resolveSource(sourceTaskId, null, null);
-        byte[] look = fetchThumbnailImage(sourceTaskId);
-        String styleImage = (look == null || look.length == 0) ? null : imageDataUri(look);
-        String prompt = blankToNull(source.getPrompt());
-        if (prompt != null && prompt.length() > MAX_STYLE_PROMPT) {
-            prompt = prompt.substring(0, MAX_STYLE_PROMPT);
-        }
-        if (styleImage == null && prompt == null) {
-            throw new BadRequestException("validation.style.required");
-        }
-        // Fresh UVs (enableOriginalUv=false): with the old ones a hole patch shares texels with its
-        // rim and could never get colours of its own.
-        var meshyRequest = new MeshyRetextureRequest(ref.inputTaskId(), ref.modelUrl(), prompt, styleImage,
-                null, true, false, List.of("glb"));
-        String meshyTaskId = meshyClient.createRetexture(meshyRequest);
-        MeshyTask task = newTask(MeshyTaskType.RETEXTURE, meshyTaskId, prompt, sourceTaskId);
-        task.setUserId(source.getUserId()); // the customer's model; no credits charged (staff step)
-        return persistAndMap(task);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public MeshyTaskResponse latestRepaint(UUID sourceTaskId) {
-        return taskRepository
-                .findFirstByParentIdAndTaskTypeAndDeletedAtIsNullOrderByCreatedAtDesc(sourceTaskId, MeshyTaskType.RETEXTURE)
-                .map(taskMapper::toResponse)
-                .orElse(null);
-    }
-
-    /** data: URI for an image, typed from its magic bytes (PNG / WebP / else JPEG). */
-    private static String imageDataUri(byte[] img) {
-        boolean png = img.length > 3 && (img[0] & 0xFF) == 0x89 && img[1] == 'P' && img[2] == 'N';
-        boolean webp = img.length > 11 && img[8] == 'W' && img[9] == 'E' && img[10] == 'B' && img[11] == 'P';
-        String type = png ? "png" : webp ? "webp" : "jpeg";
-        return "data:image/" + type + ";base64," + Base64.getEncoder().encodeToString(img);
     }
 
     @Override
@@ -1827,24 +1781,28 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             throw new BadRequestException("validation.sourceTaskId.required");
         }
         if (hasTask) {
-            MeshyTask source = requireSucceeded(sourceTaskId, expectedType);
-            // Locally-stored model (uploaded file or in-place edit): send it to Meshy as a
-            // data URI.
-            Optional<MeshyTaskAsset> asset = assetRepository.findById(source.getId());
-            if (asset.isPresent()) {
-                return new SourceRef(null, toModelDataUri(objectStorage.get(asset.get().getStorageKey())), source.getId());
-            }
-            if (acceptedAsInputTask(source.getTaskType())) {
-                return new SourceRef(source.getMeshyTaskId(), null, source.getId());
-            }
-            // Creative Lab / non-native source: continue from its generated model file.
-            String glb = resolveAssetUrl(source, "glb");
-            if (glb == null) {
-                throw new BadRequestException("meshy.task.noModelToContinue");
-            }
-            return new SourceRef(null, glb, source.getId());
+            return sourceRef(requireSucceeded(sourceTaskId, expectedType));
         }
         return new SourceRef(null, modelUrl, null);
+    }
+
+    /** How to hand an already-authorised, SUCCEEDED task's model to Meshy. */
+    private SourceRef sourceRef(MeshyTask source) {
+        // Locally-stored model (uploaded file or in-place edit): send it to Meshy as a
+        // data URI.
+        Optional<MeshyTaskAsset> asset = assetRepository.findById(source.getId());
+        if (asset.isPresent()) {
+            return new SourceRef(null, toModelDataUri(objectStorage.get(asset.get().getStorageKey())), source.getId());
+        }
+        if (acceptedAsInputTask(source.getTaskType())) {
+            return new SourceRef(source.getMeshyTaskId(), null, source.getId());
+        }
+        // Creative Lab / non-native source: continue from its generated model file.
+        String glb = resolveAssetUrl(source, "glb");
+        if (glb == null) {
+            throw new BadRequestException("meshy.task.noModelToContinue");
+        }
+        return new SourceRef(null, glb, source.getId());
     }
 
     /**

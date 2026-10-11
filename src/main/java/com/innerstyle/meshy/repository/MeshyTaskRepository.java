@@ -20,10 +20,6 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
     Optional<MeshyTask> findByMeshyTaskId(String meshyTaskId);
 
     /** Latest live child of a given type (e.g. an existing RIG of a model) — lets us reuse it instead of paying again. */
-    /** Newest live child of the given type (e.g. the latest repaint of a model), any status. */
-    Optional<MeshyTask> findFirstByParentIdAndTaskTypeAndDeletedAtIsNullOrderByCreatedAtDesc(
-            UUID parentId, MeshyTaskType taskType);
-
     Optional<MeshyTask> findFirstByParentIdAndTaskTypeAndStatusInAndDeletedAtIsNullOrderByCreatedAtDesc(
             UUID parentId, MeshyTaskType taskType, java.util.Collection<MeshyTaskStatus> statuses);
 

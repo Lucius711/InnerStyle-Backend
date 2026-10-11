@@ -9,9 +9,6 @@ import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.meshy.service.PrintabilityService;
-import com.innerstyle.meshy.dto.response.MeshyTaskResponse;
-import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
-import com.innerstyle.print.dto.response.RepaintStatusResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import com.innerstyle.print.entity.PrintOrder;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
@@ -98,63 +95,6 @@ public class StaffOrderServiceImpl implements StaffOrderService {
     @Transactional
     public RepairResponse revertModel(UUID orderId) {
         return meshyTaskService.revertToOriginal(sourceTaskIdOrThrow(orderId));
-    }
-
-    @Override
-    @Transactional
-    public RepaintStatusResponse startRepaint(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getRepaintSourceTaskId() != null) {
-            throw new BadRequestException("staff.order.repaintApplied"); // undo first, then repaint again
-        }
-        return new RepaintStatusResponse(meshyTaskService.repaint(sourceTaskIdOrThrow(orderId)), false);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public RepaintStatusResponse repaintStatus(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getRepaintSourceTaskId() != null) {
-            return new RepaintStatusResponse(taskResponse(order.getSourceTaskId()), true);
-        }
-        return new RepaintStatusResponse(meshyTaskService.latestRepaint(sourceTaskIdOrThrow(orderId)), false);
-    }
-
-    @Override
-    @Transactional
-    public RepaintStatusResponse applyRepaint(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getRepaintSourceTaskId() != null) {
-            return repaintStatus(orderId);
-        }
-        MeshyTaskResponse repaint = meshyTaskService.latestRepaint(sourceTaskIdOrThrow(orderId));
-        if (repaint == null || repaint.getStatus() != MeshyTaskStatus.SUCCEEDED) {
-            throw new BadRequestException("staff.order.repaintNotReady");
-        }
-        order.setRepaintSourceTaskId(order.getSourceTaskId());
-        order.setSourceTaskId(repaint.getId());
-        printOrderRepository.save(order);
-        return new RepaintStatusResponse(repaint, true);
-    }
-
-    @Override
-    @Transactional
-    public RepaintStatusResponse undoRepaint(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getRepaintSourceTaskId() == null) {
-            throw new BadRequestException("staff.order.repaintNotApplied");
-        }
-        UUID repaintId = order.getSourceTaskId();
-        order.setSourceTaskId(order.getRepaintSourceTaskId());
-        order.setRepaintSourceTaskId(null);
-        printOrderRepository.save(order);
-        return new RepaintStatusResponse(repaintId == null ? null : taskResponse(repaintId), false);
-    }
-
-    /** Staff view of a task: staff act on every customer's order, so pass the task's own owner. */
-    private MeshyTaskResponse taskResponse(UUID taskId) {
-        UUID owner = meshyTaskRepository.findById(taskId).map(MeshyTask::getUserId).orElse(null);
-        return meshyTaskService.getById(taskId, owner);
     }
 
     /** The order's source model task id, or a 400 if the order has no model attached. */
