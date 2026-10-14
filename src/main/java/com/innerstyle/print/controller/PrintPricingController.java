@@ -32,7 +32,11 @@ public class PrintPricingController {
             .sorted(Map.Entry.comparingByKey())
             .map(e -> new PrintPricingResponse.PrintSizePrice(e.getKey(), e.getValue()))
             .toList();
+        List<PrintPricingResponse.PrintMaterialPrice> materials = printProperties.getMaterials().entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(e -> new PrintPricingResponse.PrintMaterialPrice(e.getKey().name(), e.getValue()))
+            .toList();
         return ApiResponse.success("print.pricing",
-            new PrintPricingResponse(printProperties.getFee(), sizes));
+            new PrintPricingResponse(printProperties.getFee(), sizes, materials));
     }
 }

@@ -1,6 +1,7 @@
 package com.innerstyle.print.entity;
 
 import com.innerstyle.auth.entity.User;
+import com.innerstyle.print.entity.enums.PrintMaterial;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -49,6 +50,11 @@ public class PrintOrder {
     /** Chosen figurine height in cm (drives the price). */
     @Column(name = "size_cm")
     private Integer sizeCm;
+
+    /** Chosen plastic (adds a surcharge); null on orders placed before material selection existed. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private PrintMaterial material;
 
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;

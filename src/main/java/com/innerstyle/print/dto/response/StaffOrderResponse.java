@@ -16,6 +16,7 @@ public record StaffOrderResponse(
     UUID id,
     String status,
     Integer sizeCm,
+    String material,
     BigDecimal amount,
     String currency,
     Instant createdAt,

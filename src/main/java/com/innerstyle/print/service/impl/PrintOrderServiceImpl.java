@@ -12,6 +12,7 @@ import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
 import com.innerstyle.print.entity.PrintOrder;
+import com.innerstyle.print.entity.enums.PrintMaterial;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import com.innerstyle.print.repository.PrintOrderRepository;
 import com.innerstyle.print.service.PrintOrderService;
@@ -64,12 +65,17 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         if (!printProperties.supports(sizeCm)) {
             throw new BadRequestException("print.size.invalid");
         }
-        BigDecimal amount = printProperties.priceFor(sizeCm);
+        PrintMaterial material = request.getMaterial();
+        if (!printProperties.supportsMaterial(material)) {
+            throw new BadRequestException("print.material.invalid");
+        }
+        BigDecimal amount = printProperties.priceFor(sizeCm, material);
 
         PrintOrder order = new PrintOrder();
         order.setUser(user);
         order.setSourceTaskId(taskId);
         order.setSizeCm(sizeCm);
+        order.setMaterial(material);
         order.setAmount(amount);
         order.setStatus(PrintOrderStatus.PENDING);
         order.setNote(request.getNote());
@@ -87,8 +93,8 @@ public class PrintOrderServiceImpl implements PrintOrderService {
 
         PaymentInitResponse pay = paymentService.createPrintPayment(
             userId, order.getId(), amount, provider, clientIp);
-        log.info("Print order {} placed by {} ({}cm, await payment {})",
-            order.getId(), userId, sizeCm, provider);
+        log.info("Print order {} placed by {} ({}cm {}, await payment {})",
+            order.getId(), userId, sizeCm, material, provider);
         return new PrintOrderInitResponse(order.getId(), pay);
     }
 
@@ -114,7 +120,8 @@ public class PrintOrderServiceImpl implements PrintOrderService {
     }
 
     private PrintOrderResponse toResponse(PrintOrder o) {
-        return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(), o.getAmount(),
+        return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(),
+            o.getMaterial() == null ? null : o.getMaterial().name(), o.getAmount(),
             o.getCurrency(), o.getStatus().name(), o.getNote(),
             o.getRecipientName(), o.getRecipientPhone(),
             o.getProvinceName(), o.getWardName(), o.getAddressDetail(),

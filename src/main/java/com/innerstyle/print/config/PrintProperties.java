@@ -1,5 +1,6 @@
 package com.innerstyle.print.config;
 
+import com.innerstyle.print.entity.enums.PrintMaterial;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -22,6 +23,19 @@ public class PrintProperties {
 
     /** Sell price (VND) keyed by figurine height in cm, e.g. {8: 649000, 12: 749000, 15: 849000}. */
     private Map<Integer, BigDecimal> prices = new LinkedHashMap<>();
+
+    /** Surcharge (VND) added on top of the size price, keyed by plastic, e.g. {PLA: 0, PETG: 50000, RESIN: 150000}. */
+    private Map<PrintMaterial, BigDecimal> materials = new LinkedHashMap<>();
+
+    /** Whether a given material has a configured surcharge (used to validate the order request). */
+    public boolean supportsMaterial(PrintMaterial material) {
+        return material != null && materials.containsKey(material);
+    }
+
+    /** Total price for a size + material; callers must check {@link #supportsMaterial} first. */
+    public BigDecimal priceFor(Integer sizeCm, PrintMaterial material) {
+        return priceFor(sizeCm).add(materials.get(material));
+    }
 
     /** Resolve the price for a size, falling back to the flat fee. */
     public BigDecimal priceFor(Integer sizeCm) {

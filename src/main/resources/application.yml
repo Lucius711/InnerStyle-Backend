@@ -101,6 +101,11 @@ app:
       8: 649000
       12: 749000
       15: 849000
+    # Surcharge (VND) on top of the size price, per plastic. Sample prices — adjust to real costs.
+    materials:
+      PLA: 0
+      PETG: 50000
+      RESIN: 150000
 
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:

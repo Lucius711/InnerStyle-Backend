@@ -142,6 +142,7 @@ public class StaffOrderServiceImpl implements StaffOrderService {
             o.getId(),
             o.getStatus().name(),
             o.getSizeCm(),
+            o.getMaterial() == null ? null : o.getMaterial().name(),
             o.getAmount(),
             o.getCurrency(),
             o.getCreatedAt(),

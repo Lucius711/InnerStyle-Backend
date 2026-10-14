@@ -11,6 +11,7 @@ import com.innerstyle.print.config.PrintProperties;
 import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.entity.PrintOrder;
+import com.innerstyle.print.entity.enums.PrintMaterial;
 import com.innerstyle.print.repository.PrintOrderRepository;
 import com.innerstyle.print.service.impl.PrintOrderServiceImpl;
 import com.innerstyle.wallet.dto.response.PaymentInitResponse;
@@ -57,6 +58,8 @@ class PrintOrderServiceImplTest {
         paymentService = mock(PaymentService.class);
         printProperties = new PrintProperties();
         printProperties.getPrices().put(12, new BigDecimal("749000"));
+        printProperties.getMaterials().put(PrintMaterial.PLA, BigDecimal.ZERO);
+        printProperties.getMaterials().put(PrintMaterial.RESIN, new BigDecimal("150000"));
         service = new PrintOrderServiceImpl(printOrderRepository, meshyTaskRepository,
             userRepository, paymentService, printProperties);
     }
@@ -66,6 +69,7 @@ class PrintOrderServiceImplTest {
         r.setTaskId(taskId);
         r.setProvider(provider);
         r.setSizeCm(sizeCm);
+        r.setMaterial(PrintMaterial.PLA);
         r.setRecipientName("Nguyen Van A");
         r.setRecipientEmail("a@example.com");
         r.setRecipientPhone("0901234567");
@@ -139,5 +143,36 @@ class PrintOrderServiceImplTest {
         assertThatThrownBy(() -> service.placeOrder(userId, request("PAYOS", 99), "ip"))
             .isInstanceOf(BadRequestException.class)
             .hasMessageContaining("print.size.invalid");
+    }
+
+    @Test
+    @DisplayName("placeOrder: material surcharge is added to the size price server-side")
+    void placeOrder_materialSurcharge() {
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        when(printOrderRepository.save(any(PrintOrder.class))).thenAnswer(i -> i.getArgument(0));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setMaterial(PrintMaterial.RESIN);
+
+        service.placeOrder(userId, r, "ip");
+
+        verify(paymentService).createPrintPayment(eq(userId), any(), eq(new BigDecimal("899000")),
+            eq(PaymentProvider.PAYOS), eq("ip"));
+    }
+
+    @Test
+    @DisplayName("placeOrder: material without a configured surcharge → print.material.invalid")
+    void placeOrder_badMaterial() {
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setMaterial(PrintMaterial.PETG);
+
+        assertThatThrownBy(() -> service.placeOrder(userId, r, "ip"))
+            .isInstanceOf(BadRequestException.class)
+            .hasMessageContaining("print.material.invalid");
+        verify(paymentService, never()).createPrintPayment(any(), any(), any(), any(), any());
     }
 }

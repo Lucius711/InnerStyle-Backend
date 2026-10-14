@@ -13,8 +13,13 @@ import java.util.List;
 @Schema(description = "3D-print sell prices by figurine height plus the fallback fee")
 public record PrintPricingResponse(
     BigDecimal fallbackFee,
-    List<PrintSizePrice> sizes
+    List<PrintSizePrice> sizes,
+    List<PrintMaterialPrice> materials
 ) {
     public record PrintSizePrice(int heightCm, BigDecimal price) {
+    }
+
+    /** Surcharge (VND) added to the size price for this plastic. */
+    public record PrintMaterialPrice(String code, BigDecimal surcharge) {
     }
 }

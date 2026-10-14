@@ -1,5 +1,6 @@
 package com.innerstyle.print.dto.request;
 
+import com.innerstyle.print.entity.enums.PrintMaterial;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -36,6 +37,11 @@ public class CreatePrintOrderRequest {
     @Schema(description = "Figurine height in cm (drives the price); must be a configured size",
             example = "12", allowableValues = {"8", "12", "15"})
     private Integer sizeCm;
+
+    @NotNull(message = "1.material.required")
+    @Schema(description = "Plastic to print in (adds a surcharge); must be a configured material",
+            example = "PLA", allowableValues = {"PLA", "PETG", "RESIN"})
+    private PrintMaterial material;
 
     // ----- Recipient -----
 
