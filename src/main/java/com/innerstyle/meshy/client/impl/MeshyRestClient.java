@@ -51,6 +51,10 @@ public class MeshyRestClient implements MeshyClient {
                 return new ResourceNotFoundException("meshy.task.purgedByMeshy");
             }
         }
+        // 402 = OUR Meshy account/plan can't create tasks (e.g. free plan) — not the user's input.
+        if (ex.getStatusCode().value() == 402) {
+            return new UpstreamServiceException("meshy.planRequired");
+        }
         if (ex.getStatusCode().is4xxClientError()) {
             return new UpstreamRequestException("meshy.inputRejected");
         }

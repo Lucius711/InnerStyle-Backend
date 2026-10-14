@@ -2,8 +2,12 @@ package com.innerstyle.analytics.service.impl;
 
 import com.innerstyle.analytics.dto.response.DailyVisitResponse;
 import com.innerstyle.analytics.entity.DailyVisit;
+import com.innerstyle.analytics.entity.VisitLog;
 import com.innerstyle.analytics.repository.DailyVisitRepository;
+import com.innerstyle.analytics.repository.VisitLogRepository;
 import com.innerstyle.analytics.service.VisitService;
+import com.innerstyle.auth.entity.enums.UserStatus;
+import com.innerstyle.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +16,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -19,13 +24,22 @@ import java.util.stream.Collectors;
 public class VisitServiceImpl implements VisitService {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final int USER_AGENT_MAX = 255;
 
     private final DailyVisitRepository repository;
+    private final VisitLogRepository visitLogRepository;
+    private final UserRepository userRepository;
 
     @Override
     @Transactional
-    public void recordVisit() {
+    public void recordVisit(UUID userId, String ipAddress, String userAgent) {
         repository.increment(LocalDate.now(ZONE));
+        VisitLog log = new VisitLog();
+        log.setUserId(userId);
+        log.setIpAddress(ipAddress);
+        log.setUserAgent(userAgent == null || userAgent.length() <= USER_AGENT_MAX
+                ? userAgent : userAgent.substring(0, USER_AGENT_MAX));
+        visitLogRepository.save(log);
     }
 
     @Override
@@ -36,8 +50,19 @@ public class VisitServiceImpl implements VisitService {
         Map<LocalDate, Integer> counts = repository.findByVisitDateGreaterThanEqualOrderByVisitDateAsc(from)
                 .stream()
                 .collect(Collectors.toMap(DailyVisit::getVisitDate, DailyVisit::getVisitCount));
+        Map<LocalDate, Long> active = visitLogRepository
+                .countDailyActiveUsers(from.atStartOfDay(ZONE).toInstant(), ZONE.getId())
+                .stream()
+                .collect(Collectors.toMap(r -> LocalDate.parse(r.getDay()),
+                        VisitLogRepository.DailyActiveUsers::getUsers));
         return from.datesUntil(today.plusDays(1))
-                .map(d -> new DailyVisitResponse(d, counts.getOrDefault(d, 0)))
+                .map(d -> new DailyVisitResponse(d, counts.getOrDefault(d, 0), active.getOrDefault(d, 0L)))
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long activeAccounts() {
+        return userRepository.countByStatus(UserStatus.ACTIVE);
     }
 }

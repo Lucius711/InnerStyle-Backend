@@ -33,4 +33,10 @@ public class AdminVisitController {
     public ApiResponse<List<DailyVisitResponse>> daily(@RequestParam(defaultValue = "14") int days) {
         return ApiResponse.success("visit.daily", visitService.dailyVisits(Math.clamp(days, 1, MAX_DAYS)));
     }
+
+    @Operation(summary = "Number of ACTIVE accounts in dtb_users")
+    @GetMapping("/active-accounts")
+    public ApiResponse<Long> activeAccounts() {
+        return ApiResponse.success("visit.activeAccounts", visitService.activeAccounts());
+    }
 }
