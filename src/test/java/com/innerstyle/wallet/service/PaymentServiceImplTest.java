@@ -218,6 +218,34 @@ class PaymentServiceImplTest {
         assertThat(res.credited()).isFalse();
     }
 
+    @Test
+    @DisplayName("Return: payOS link still PENDING → PENDING, order left untouched")
+    void return_stillPending_notFailed() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PROCESSING);
+        when(payosGateway.verifyReturn(anyMap())).thenReturn(
+            new GatewayVerification(true, false, "123456", new BigDecimal("100000"), "TXN1", "PENDING"));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
+
+        PaymentResultResponse res = service.confirmReturn(PaymentProvider.PAYOS, Map.of());
+
+        assertThat(res.status()).isEqualTo("PENDING");
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("Return: payOS link CANCELLED → FAILED")
+    void return_cancelled_failed() {
+        PaymentOrder order = subscriptionOrder(PaymentStatus.PROCESSING);
+        when(payosGateway.verifyReturn(anyMap())).thenReturn(
+            new GatewayVerification(true, false, "123456", new BigDecimal("100000"), "TXN1", "CANCELLED"));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(order));
+
+        PaymentResultResponse res = service.confirmReturn(PaymentProvider.PAYOS, Map.of());
+
+        assertThat(res.status()).isEqualTo("FAILED");
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.FAILED);
+    }
+
     // ------------------------------------------------------------------ PRINT fulfilment
 
     @Test

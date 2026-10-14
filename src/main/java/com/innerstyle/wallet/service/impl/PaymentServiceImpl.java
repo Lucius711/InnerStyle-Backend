@@ -33,6 +33,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -53,6 +54,9 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentCallbackRepository paymentCallbackRepository;
     private final PayosGateway payosGateway;
     private final PaymentProperties paymentProperties;
+
+    /** payOS link statuses after which the order can never be paid. */
+    private static final Set<String> DEAD_LINK_STATUSES = Set.of("CANCELLED", "EXPIRED");
 
     @Override
     @Transactional
@@ -134,6 +138,11 @@ public class PaymentServiceImpl implements PaymentService {
         if (v.success()) {
             settle(order, v);
             return new PaymentResultResponse(order.getOrderCode(), "SUCCESS", order.getAmount(), true);
+        }
+        // The QR page polls this every few seconds while the link is still open. Only a dead link
+        // fails the order; "not paid yet" must leave it PROCESSING so resume reuses the same QR.
+        if (!DEAD_LINK_STATUSES.contains(v.responseCode())) {
+            return new PaymentResultResponse(order.getOrderCode(), "PENDING", order.getAmount(), false);
         }
         order.setStatus(PaymentStatus.FAILED);
         paymentOrderRepository.save(order);

@@ -145,7 +145,20 @@ public class PayosGateway {
         String providedSignature = response == null || response.get("signature") == null
             ? null : String.valueOf(response.get("signature"));
         boolean success = "PAID".equals(data.get("status"));
-        return verifyData(data, providedSignature, success);
+        GatewayVerification v = verifyData(data, providedSignature, success);
+        // This response comes from our own authenticated HTTPS call to payOS, so it is trusted as-is:
+        // its body signature doesn't reproduce once `transactions` is filled in (paid links), which
+        // failed every real payment. Webhooks (unsolicited, hostile input) still verify signatures.
+        boolean trusted = "00".equals(String.valueOf(response == null ? null : response.get("code")));
+        if (!v.signatureValid()) {
+            log.warn("payOS lookup signature mismatch for order {} (status {}) — trusting HTTPS response",
+                orderCode, data.get("status"));
+        }
+        // The lookup carries no per-transaction `code`; surface payOS's link status there instead
+        // (PENDING / PAID / CANCELLED / EXPIRED …) so callers can tell "not paid yet" from "dead".
+        Object status = data.get("status");
+        return new GatewayVerification(trusted, v.success(), v.orderCode(), v.amount(),
+            v.providerTxnRef(), status == null ? null : String.valueOf(status));
     }
 
     private GatewayVerification verifyData(Map<String, Object> data, String providedSignature, boolean success) {
