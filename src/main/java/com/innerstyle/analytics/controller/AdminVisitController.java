@@ -39,4 +39,10 @@ public class AdminVisitController {
     public ApiResponse<Long> activeAccounts() {
         return ApiResponse.success("visit.activeAccounts", visitService.activeAccounts());
     }
+
+    @Operation(summary = "Signed-in users online right now (heartbeat in the last 2 minutes)")
+    @GetMapping("/online")
+    public ApiResponse<Long> online() {
+        return ApiResponse.success("visit.online", visitService.onlineUsers());
+    }
 }

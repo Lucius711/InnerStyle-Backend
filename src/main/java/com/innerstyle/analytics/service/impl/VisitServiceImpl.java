@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -25,6 +27,8 @@ public class VisitServiceImpl implements VisitService {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final int USER_AGENT_MAX = 255;
+    /** Two missed 60s heartbeats = offline. */
+    private static final Duration ONLINE_WINDOW = Duration.ofMinutes(2);
 
     private final DailyVisitRepository repository;
     private final VisitLogRepository visitLogRepository;
@@ -50,13 +54,12 @@ public class VisitServiceImpl implements VisitService {
         Map<LocalDate, Integer> counts = repository.findByVisitDateGreaterThanEqualOrderByVisitDateAsc(from)
                 .stream()
                 .collect(Collectors.toMap(DailyVisit::getVisitDate, DailyVisit::getVisitCount));
-        Map<LocalDate, Long> active = visitLogRepository
-                .countDailyActiveUsers(from.atStartOfDay(ZONE).toInstant(), ZONE.getId())
+        Map<LocalDate, Long> newUsers = userRepository
+                .countNewUsersPerDay(from.atStartOfDay(ZONE).toInstant(), ZONE.getId())
                 .stream()
-                .collect(Collectors.toMap(r -> LocalDate.parse(r.getDay()),
-                        VisitLogRepository.DailyActiveUsers::getUsers));
+                .collect(Collectors.toMap(r -> LocalDate.parse(r.getDay()), UserRepository.DailyCount::getUsers));
         return from.datesUntil(today.plusDays(1))
-                .map(d -> new DailyVisitResponse(d, counts.getOrDefault(d, 0), active.getOrDefault(d, 0L)))
+                .map(d -> new DailyVisitResponse(d, counts.getOrDefault(d, 0), newUsers.getOrDefault(d, 0L)))
                 .toList();
     }
 
@@ -64,5 +67,17 @@ public class VisitServiceImpl implements VisitService {
     @Transactional(readOnly = true)
     public long activeAccounts() {
         return userRepository.countByStatus(UserStatus.ACTIVE);
+    }
+
+    @Override
+    @Transactional
+    public void heartbeat(UUID userId) {
+        userRepository.touchLastSeen(userId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long onlineUsers() {
+        return userRepository.countSeenSince(Instant.now().minus(ONLINE_WINDOW));
     }
 }

@@ -32,4 +32,13 @@ public class VisitController {
                 ClientIpResolver.resolve(request), request.getHeader(HttpHeaders.USER_AGENT));
         return ApiResponse.success("visit.recorded");
     }
+
+    @Operation(summary = "Presence heartbeat; no-op for guests")
+    @PostMapping("/heartbeat")
+    public ApiResponse<Void> heartbeat(@AuthenticationPrincipal UserPrincipal principal) {
+        if (principal != null) {
+            visitService.heartbeat(principal.getId());
+        }
+        return ApiResponse.success("visit.heartbeat");
+    }
 }

@@ -105,7 +105,7 @@ public class AuthServiceImpl implements AuthService {
         blacklistAccessToken(accessToken);
     }
 
-    /** Revoke the still-valid access token by blacklisting its jti until it would expire. */
+    /** Blacklist the still-valid access token's jti until it would expire, and mark the user offline. */
     private void blacklistAccessToken(String accessToken) {
         if (accessToken == null || accessToken.isBlank()) {
             return;
@@ -116,6 +116,7 @@ public class AuthServiceImpl implements AuthService {
             if (ttlMs > 0) {
                 tokenBlacklist.blacklist(claims.getId(), Duration.ofMillis(ttlMs));
             }
+            userRepository.clearLastSeen(jwtService.toPrincipal(claims).getId());
         } catch (RuntimeException ex) {
             log.debug("Could not blacklist access token on logout: {}", ex.getMessage());
         }

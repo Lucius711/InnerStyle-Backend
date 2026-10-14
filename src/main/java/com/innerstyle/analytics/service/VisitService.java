@@ -15,4 +15,10 @@ public interface VisitService {
 
     /** Accounts in {@code dtb_users} with status ACTIVE. */
     long activeAccounts();
+
+    /** Marks a signed-in user as online now (called by the SPA heartbeat). */
+    void heartbeat(UUID userId);
+
+    /** Users whose last heartbeat is within the online window (cleared on logout). */
+    long onlineUsers();
 }
