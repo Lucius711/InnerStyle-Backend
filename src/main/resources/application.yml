@@ -108,6 +108,8 @@ app:
       RESIN: 150000
     # Couple Set: % off two figurines bought together in one order.
     couple-discount-percent: ${PRINT_COUPLE_DISCOUNT_PERCENT:13}
+    # Optional LED light base (VND) a buyer can add at checkout; the greeting card is free.
+    light-price: ${PRINT_LIGHT_PRICE:50000}
 
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:

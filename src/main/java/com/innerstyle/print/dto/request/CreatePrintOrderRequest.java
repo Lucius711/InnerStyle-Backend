@@ -52,6 +52,18 @@ public class CreatePrintOrderRequest {
             example = "12", allowableValues = {"8", "12", "15"})
     private Integer pairSizeCm;
 
+    // ----- Gift extras (optional) -----
+
+    @Schema(description = "Add an LED light base (paid extra, app.print.light-price)")
+    private boolean withLight;
+
+    @Schema(description = "Add a free greeting card")
+    private boolean withCard;
+
+    @Size(max = 300, message = "2.cardMessage.tooLong")
+    @Schema(description = "Message written on the greeting card; ignored unless withCard is true")
+    private String cardMessage;
+
     // ----- Recipient -----
 
     @NotBlank(message = "1.recipientName.required")

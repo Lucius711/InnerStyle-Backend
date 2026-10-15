@@ -164,6 +164,47 @@ class PrintOrderServiceImplTest {
     }
 
     @Test
+    @DisplayName("placeOrder: LED light adds its price; the card is free and keeps a trimmed message")
+    void placeOrder_giftExtras() {
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        when(printOrderRepository.save(any(PrintOrder.class))).thenAnswer(i -> i.getArgument(0));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setWithLight(true);
+        r.setWithCard(true);
+        r.setCardMessage("  Chuc mung sinh nhat!  ");
+
+        service.placeOrder(userId, r, "ip");
+
+        verify(paymentService).createPrintPayment(eq(userId), any(), eq(new BigDecimal("799000")),
+            eq(PaymentProvider.PAYOS), eq("ip"));
+        org.mockito.ArgumentCaptor<PrintOrder> saved = org.mockito.ArgumentCaptor.forClass(PrintOrder.class);
+        verify(printOrderRepository).save(saved.capture());
+        org.assertj.core.api.Assertions.assertThat(saved.getValue().getCardMessage()).isEqualTo("Chuc mung sinh nhat!");
+        org.assertj.core.api.Assertions.assertThat(saved.getValue().isWithLight()).isTrue();
+    }
+
+    @Test
+    @DisplayName("placeOrder: a card message without the card option is dropped")
+    void placeOrder_messageWithoutCard() {
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        when(printOrderRepository.save(any(PrintOrder.class))).thenAnswer(i -> i.getArgument(0));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setCardMessage("hi");
+
+        service.placeOrder(userId, r, "ip");
+
+        org.mockito.ArgumentCaptor<PrintOrder> saved = org.mockito.ArgumentCaptor.forClass(PrintOrder.class);
+        verify(printOrderRepository).save(saved.capture());
+        org.assertj.core.api.Assertions.assertThat(saved.getValue().getCardMessage()).isNull();
+        verify(paymentService).createPrintPayment(eq(userId), any(), eq(new BigDecimal("749000")),
+            eq(PaymentProvider.PAYOS), eq("ip"));
+    }
+
+    @Test
     @DisplayName("placeOrder: material without a configured surcharge → print.material.invalid")
     void placeOrder_badMaterial() {
         when(meshyTaskRepository.findById(taskId))

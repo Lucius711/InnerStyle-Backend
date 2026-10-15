@@ -47,6 +47,11 @@ public record StaffOrderResponse(
 
     // Couple Set: the second model (null for a single figurine)
     UUID pairTaskId,
-    Integer pairSizeCm
+    Integer pairSizeCm,
+
+    // Gift extras to pack with the figurine
+    boolean withLight,
+    boolean withCard,
+    String cardMessage
 ) {
 }

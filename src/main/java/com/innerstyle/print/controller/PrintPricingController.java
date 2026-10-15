@@ -38,6 +38,6 @@ public class PrintPricingController {
             .toList();
         return ApiResponse.success("print.pricing",
             new PrintPricingResponse(printProperties.getFee(), sizes, materials,
-                printProperties.getCoupleDiscountPercent()));
+                printProperties.getCoupleDiscountPercent(), printProperties.getLightPrice()));
     }
 }

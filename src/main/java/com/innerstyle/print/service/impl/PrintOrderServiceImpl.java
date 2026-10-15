@@ -77,6 +77,11 @@ public class PrintOrderServiceImpl implements PrintOrderService {
             }
             amount = printProperties.couplePrice(amount.add(printProperties.priceFor(pairSizeCm, material)));
         }
+        if (request.isWithLight()) {
+            amount = amount.add(printProperties.getLightPrice());
+        }
+        String cardMessage = request.isWithCard() && request.getCardMessage() != null && !request.getCardMessage().isBlank()
+            ? request.getCardMessage().trim() : null;
 
         PrintOrder order = new PrintOrder();
         order.setUser(user);
@@ -85,6 +90,9 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         order.setMaterial(material);
         order.setPairTaskId(pairTaskId);
         order.setPairSizeCm(pairSizeCm);
+        order.setWithLight(request.isWithLight());
+        order.setWithCard(request.isWithCard());
+        order.setCardMessage(cardMessage);
         order.setAmount(amount);
         order.setStatus(PrintOrderStatus.PENDING);
         order.setNote(request.getNote());
@@ -145,7 +153,8 @@ public class PrintOrderServiceImpl implements PrintOrderService {
 
     private PrintOrderResponse toResponse(PrintOrder o) {
         return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(),
-            o.getMaterial() == null ? null : o.getMaterial().name(), o.getPairTaskId(), o.getPairSizeCm(), o.getAmount(),
+            o.getMaterial() == null ? null : o.getMaterial().name(), o.getPairTaskId(), o.getPairSizeCm(),
+            o.isWithLight(), o.isWithCard(), o.getCardMessage(), o.getAmount(),
             o.getCurrency(), o.getStatus().name(), o.getNote(),
             o.getRecipientName(), o.getRecipientPhone(),
             o.getProvinceName(), o.getWardName(), o.getAddressDetail(),

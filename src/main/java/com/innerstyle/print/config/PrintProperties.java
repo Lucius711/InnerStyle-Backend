@@ -31,6 +31,9 @@ public class PrintProperties {
     /** Couple Set discount (%) off the two figurines' combined price. */
     private int coupleDiscountPercent = 13;
 
+    /** Optional LED light base (VND), added once per order after any Couple Set discount. */
+    private BigDecimal lightPrice = new BigDecimal("50000");
+
     /** Couple Set price: both figurines' full price minus the discount, rounded to the nearest 1,000 VND. */
     public BigDecimal couplePrice(BigDecimal fullPrice) {
         return fullPrice.multiply(BigDecimal.valueOf(100L - coupleDiscountPercent))

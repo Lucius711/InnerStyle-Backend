@@ -64,6 +64,17 @@ public class PrintOrder {
     @Column(name = "pair_size_cm")
     private Integer pairSizeCm;
 
+    /** Gift extra: LED light base (paid). */
+    @Column(name = "with_light", nullable = false)
+    private boolean withLight;
+
+    /** Gift extra: free greeting card, optionally with a message. */
+    @Column(name = "with_card", nullable = false)
+    private boolean withCard;
+
+    @Column(name = "card_message", length = 300)
+    private String cardMessage;
+
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;
 

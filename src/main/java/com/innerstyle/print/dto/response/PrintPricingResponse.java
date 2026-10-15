@@ -15,7 +15,8 @@ public record PrintPricingResponse(
     BigDecimal fallbackFee,
     List<PrintSizePrice> sizes,
     List<PrintMaterialPrice> materials,
-    int coupleDiscountPercent
+    int coupleDiscountPercent,
+    BigDecimal lightPrice
 ) {
     public record PrintSizePrice(int heightCm, BigDecimal price) {
     }

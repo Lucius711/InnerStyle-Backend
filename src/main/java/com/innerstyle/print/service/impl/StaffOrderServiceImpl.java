@@ -164,6 +164,9 @@ public class StaffOrderServiceImpl implements StaffOrderService {
             thumbnail,
             formats,
             o.getPairTaskId(),
-            o.getPairSizeCm());
+            o.getPairSizeCm(),
+            o.isWithLight(),
+            o.isWithCard(),
+            o.getCardMessage());
     }
 }
