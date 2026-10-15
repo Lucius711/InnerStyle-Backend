@@ -43,6 +43,15 @@ public class CreatePrintOrderRequest {
             example = "PLA", allowableValues = {"PLA", "PETG", "RESIN"})
     private PrintMaterial material;
 
+    // ----- Couple Set (optional): a second of the buyer's own models, printed alongside -----
+
+    @Schema(description = "Couple Set: the second model to print in the same order (must be the buyer's own, finished, and differ from taskId)")
+    private UUID pairTaskId;
+
+    @Schema(description = "Couple Set: height in cm of the second figurine; required when pairTaskId is set",
+            example = "12", allowableValues = {"8", "12", "15"})
+    private Integer pairSizeCm;
+
     // ----- Recipient -----
 
     @NotBlank(message = "1.recipientName.required")

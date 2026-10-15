@@ -106,6 +106,8 @@ app:
       PLA: 0
       PETG: 50000
       RESIN: 150000
+    # Couple Set: % off two figurines bought together in one order.
+    couple-discount-percent: ${PRINT_COUPLE_DISCOUNT_PERCENT:13}
 
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:

@@ -70,48 +70,49 @@ public class StaffOrderServiceImpl implements StaffOrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public MeshyTaskService.ExportPrep prepareModelZip(UUID orderId, String format) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getSourceTaskId() == null) {
-            throw new BadRequestException("staff.order.noModel");
-        }
-        return meshyTaskService.prepareTask(order.getSourceTaskId(), format);
+    public MeshyTaskService.ExportPrep prepareModelZip(UUID orderId, String format, boolean isPair) {
+        return meshyTaskService.prepareTask(modelTaskIdOrThrow(orderId, isPair), format);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public PrintabilityResponse printability(UUID orderId) {
-        return printabilityService.analyze(sourceTaskIdOrThrow(orderId));
+    public PrintabilityResponse printability(UUID orderId, boolean isPair) {
+        return printabilityService.analyze(modelTaskIdOrThrow(orderId, isPair));
     }
 
     @Override
     @Transactional
-    public RepairResponse repairModel(UUID orderId) {
+    public RepairResponse repairModel(UUID orderId, boolean isPair) {
         // Owner check is unnecessary here — the controller is @PreAuthorize("hasRole('STAFF')").
-        return meshyTaskService.repairInPlace(sourceTaskIdOrThrow(orderId));
+        return meshyTaskService.repairInPlace(modelTaskIdOrThrow(orderId, isPair));
     }
 
     @Override
     @Transactional
-    public RepairResponse revertModel(UUID orderId) {
-        return meshyTaskService.revertToOriginal(sourceTaskIdOrThrow(orderId));
+    public RepairResponse revertModel(UUID orderId, boolean isPair) {
+        return meshyTaskService.revertToOriginal(modelTaskIdOrThrow(orderId, isPair));
     }
 
-    /** The order's source model task id, or a 400 if the order has no model attached. */
-    private UUID sourceTaskIdOrThrow(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
-        if (order.getSourceTaskId() == null) {
+    /** The order's main (or Couple Set second) model task id, or a 400 if that model isn't attached. */
+    private UUID modelTaskIdOrThrow(UUID orderId, boolean isPair) {
+        UUID taskId = modelTaskId(getOrderOrThrow(orderId), isPair);
+        if (taskId == null) {
             throw new BadRequestException("staff.order.noModel");
         }
-        return order.getSourceTaskId();
+        return taskId;
     }
 
     @Override
     @Transactional // fetchThumbnailImage may cache the image into R2 on a miss
-    public byte[] fetchThumbnail(UUID orderId) {
-        PrintOrder order = getOrderOrThrow(orderId);
+    public byte[] fetchThumbnail(UUID orderId, boolean isPair) {
+        UUID taskId = modelTaskId(getOrderOrThrow(orderId), isPair);
         // Same source as the customer-facing proxy: R2 first, Meshy only as a one-time fallback.
-        return order.getSourceTaskId() == null ? null : meshyTaskService.fetchThumbnailImage(order.getSourceTaskId());
+        return taskId == null ? null : meshyTaskService.fetchThumbnailImage(taskId);
+    }
+
+    /** The order's main model, or (Couple Set) its second model. */
+    private static UUID modelTaskId(PrintOrder order, boolean isPair) {
+        return isPair ? order.getPairTaskId() : order.getSourceTaskId();
     }
 
     // ----- helpers -----
@@ -161,6 +162,8 @@ public class StaffOrderServiceImpl implements StaffOrderService {
             o.getNote(),
             o.getSourceTaskId(),
             thumbnail,
-            formats);
+            formats,
+            o.getPairTaskId(),
+            o.getPairSizeCm());
     }
 }

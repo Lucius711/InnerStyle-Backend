@@ -50,6 +50,10 @@ public class UserMembership {
     @Column(name = "credits_remaining", nullable = false)
     private int creditsRemaining;
 
+    /** Lifetime generations used on the FREE plan (capped, never renewed). */
+    @Column(name = "free_uses", nullable = false)
+    private int freeUses;
+
     @Column(name = "period_start", nullable = false)
     private Instant periodStart = Instant.now();
 

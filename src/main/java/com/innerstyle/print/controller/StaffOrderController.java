@@ -74,8 +74,10 @@ public class StaffOrderController {
 
     @Operation(summary = "Proxy the order's model thumbnail — fetches a fresh signed URL from Meshy and streams the image bytes")
     @GetMapping("/{id}/thumbnail")
-    public ResponseEntity<byte[]> thumbnail(@PathVariable UUID id) {
-        byte[] data = staffOrderService.fetchThumbnail(id);
+    public ResponseEntity<byte[]> thumbnail(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean pair) {
+        byte[] data = staffOrderService.fetchThumbnail(id, pair);
         if (data == null || data.length == 0) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
@@ -87,35 +89,42 @@ public class StaffOrderController {
 
     @Operation(summary = "Analyse the 3D-print readiness of the order's model (watertight / holes / non-manifold)")
     @GetMapping("/{id}/printability")
-    public ApiResponse<PrintabilityResponse> printability(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.printability", staffOrderService.printability(id));
+    public ApiResponse<PrintabilityResponse> printability(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean pair) {
+        return ApiResponse.success("staff.order.printability", staffOrderService.printability(id, pair));
     }
 
     @Operation(summary = "Auto-repair the order's model into a watertight, printable mesh and save it "
             + "in place (the existing download then serves the repaired model). Returns before/after stats.")
     @PostMapping("/{id}/repair")
-    public ApiResponse<RepairResponse> repair(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaired", staffOrderService.repairModel(id));
+    public ApiResponse<RepairResponse> repair(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean pair) {
+        return ApiResponse.success("staff.order.repaired", staffOrderService.repairModel(id, pair));
     }
 
     @Operation(summary = "Revert the order's model back to its pre-repair backup, if one exists. "
             + "Returns before/after stats.")
     @PostMapping("/{id}/revert")
-    public ApiResponse<RepairResponse> revert(@PathVariable UUID id) {
-        return ApiResponse.success("staff.order.repaired", staffOrderService.revertModel(id));
+    public ApiResponse<RepairResponse> revert(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean pair) {
+        return ApiResponse.success("staff.order.repaired", staffOrderService.revertModel(id, pair));
     }
 
     @Operation(summary = "Download the customer's 3D model for this order as a ZIP (model + textures)")
     @GetMapping("/{id}/model")
     public ResponseEntity<StreamingResponseBody> downloadModel(
             @PathVariable UUID id,
-            @RequestParam(defaultValue = "glb") String format) {
-        MeshyTaskService.ExportPrep prep = staffOrderService.prepareModelZip(id, format);
+            @RequestParam(defaultValue = "glb") String format,
+            @RequestParam(defaultValue = "false") boolean pair) {
+        MeshyTaskService.ExportPrep prep = staffOrderService.prepareModelZip(id, format, pair);
         StreamingResponseBody body = out -> meshyTaskService.writeZip(prep, out);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "application/zip")
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"order-" + id.toString().substring(0, 8) + ".zip\"")
+                        "attachment; filename=\"order-" + id.toString().substring(0, 8) + (pair ? "-pair" : "") + ".zip\"")
                 .body(body);
     }
 }

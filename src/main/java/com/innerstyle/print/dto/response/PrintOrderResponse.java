@@ -12,6 +12,8 @@ public record PrintOrderResponse(
     UUID sourceTaskId,
     Integer sizeCm,
     String material,
+    UUID pairTaskId,
+    Integer pairSizeCm,
     BigDecimal amount,
     String currency,
     String status,

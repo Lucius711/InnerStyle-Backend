@@ -14,7 +14,8 @@ import java.util.List;
 public record PrintPricingResponse(
     BigDecimal fallbackFee,
     List<PrintSizePrice> sizes,
-    List<PrintMaterialPrice> materials
+    List<PrintMaterialPrice> materials,
+    int coupleDiscountPercent
 ) {
     public record PrintSizePrice(int heightCm, BigDecimal price) {
     }

@@ -50,14 +50,7 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         UUID taskId = request.getTaskId();
         PaymentProvider provider = PaymentProvider.valueOf(request.getProvider());
 
-        MeshyTask task = meshyTaskRepository.findById(taskId)
-            .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
-        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
-            throw new BadRequestException("print.task.notOwned");
-        }
-        if (task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
-            throw new BadRequestException("print.task.notReady");
-        }
+        requirePrintableTask(taskId, userId);
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
 
@@ -71,11 +64,27 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         }
         BigDecimal amount = printProperties.priceFor(sizeCm, material);
 
+        UUID pairTaskId = request.getPairTaskId();
+        Integer pairSizeCm = null;
+        if (pairTaskId != null) {
+            if (pairTaskId.equals(taskId)) {
+                throw new BadRequestException("print.couple.sameModel");
+            }
+            requirePrintableTask(pairTaskId, userId);
+            pairSizeCm = request.getPairSizeCm();
+            if (!printProperties.supports(pairSizeCm)) {
+                throw new BadRequestException("print.size.invalid");
+            }
+            amount = printProperties.couplePrice(amount.add(printProperties.priceFor(pairSizeCm, material)));
+        }
+
         PrintOrder order = new PrintOrder();
         order.setUser(user);
         order.setSourceTaskId(taskId);
         order.setSizeCm(sizeCm);
         order.setMaterial(material);
+        order.setPairTaskId(pairTaskId);
+        order.setPairSizeCm(pairSizeCm);
         order.setAmount(amount);
         order.setStatus(PrintOrderStatus.PENDING);
         order.setNote(request.getNote());
@@ -93,8 +102,8 @@ public class PrintOrderServiceImpl implements PrintOrderService {
 
         PaymentInitResponse pay = paymentService.createPrintPayment(
             userId, order.getId(), amount, provider, clientIp);
-        log.info("Print order {} placed by {} ({}cm {}, await payment {})",
-            order.getId(), userId, sizeCm, material, provider);
+        log.info("Print order {} placed by {} ({}cm {}{}, await payment {})",
+            order.getId(), userId, sizeCm, material, pairTaskId == null ? "" : " + couple " + pairSizeCm + "cm", provider);
         return new PrintOrderInitResponse(order.getId(), pay);
     }
 
@@ -119,9 +128,21 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         return new PrintOrderInitResponse(order.getId(), pay);
     }
 
+    /** The model must exist, belong to the buyer and be finished. */
+    private void requirePrintableTask(UUID taskId, UUID userId) {
+        MeshyTask task = meshyTaskRepository.findById(taskId)
+            .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
+        if (task.getUserId() == null || !task.getUserId().equals(userId)) {
+            throw new BadRequestException("print.task.notOwned");
+        }
+        if (task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
+            throw new BadRequestException("print.task.notReady");
+        }
+    }
+
     private PrintOrderResponse toResponse(PrintOrder o) {
         return new PrintOrderResponse(o.getId(), o.getSourceTaskId(), o.getSizeCm(),
-            o.getMaterial() == null ? null : o.getMaterial().name(), o.getAmount(),
+            o.getMaterial() == null ? null : o.getMaterial().name(), o.getPairTaskId(), o.getPairSizeCm(), o.getAmount(),
             o.getCurrency(), o.getStatus().name(), o.getNote(),
             o.getRecipientName(), o.getRecipientPhone(),
             o.getProvinceName(), o.getWardName(), o.getAddressDetail(),

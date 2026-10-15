@@ -6,6 +6,7 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -26,6 +27,16 @@ public class PrintProperties {
 
     /** Surcharge (VND) added on top of the size price, keyed by plastic, e.g. {PLA: 0, PETG: 50000, RESIN: 150000}. */
     private Map<PrintMaterial, BigDecimal> materials = new LinkedHashMap<>();
+
+    /** Couple Set discount (%) off the two figurines' combined price. */
+    private int coupleDiscountPercent = 13;
+
+    /** Couple Set price: both figurines' full price minus the discount, rounded to the nearest 1,000 VND. */
+    public BigDecimal couplePrice(BigDecimal fullPrice) {
+        return fullPrice.multiply(BigDecimal.valueOf(100L - coupleDiscountPercent))
+            .divide(BigDecimal.valueOf(100_000L), 0, RoundingMode.HALF_UP)
+            .multiply(BigDecimal.valueOf(1_000L));
+    }
 
     /** Whether a given material has a configured surcharge (used to validate the order request). */
     public boolean supportsMaterial(PrintMaterial material) {

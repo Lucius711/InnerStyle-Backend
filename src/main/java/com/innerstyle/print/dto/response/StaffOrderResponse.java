@@ -43,6 +43,10 @@ public record StaffOrderResponse(
     // 3D model to print
     UUID sourceTaskId,
     String modelThumbnailUrl,
-    List<String> availableFormats
+    List<String> availableFormats,
+
+    // Couple Set: the second model (null for a single figurine)
+    UUID pairTaskId,
+    Integer pairSizeCm
 ) {
 }

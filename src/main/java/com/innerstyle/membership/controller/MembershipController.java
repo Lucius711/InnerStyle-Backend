@@ -4,6 +4,7 @@ import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.response.ApiResponse;
 import com.innerstyle.membership.dto.request.SubscribeRequest;
 import com.innerstyle.membership.dto.response.MembershipResponse;
+import com.innerstyle.membership.service.FreeQuotaCreditService;
 import com.innerstyle.membership.service.MembershipService;
 import com.innerstyle.wallet.dto.response.PaymentInitResponse;
 import com.innerstyle.wallet.entity.enums.PaymentProvider;
@@ -35,11 +36,18 @@ public class MembershipController {
 
     private final MembershipService membershipService;
     private final PaymentService paymentService;
+    private final FreeQuotaCreditService freeQuotaCreditService;
 
     @Operation(summary = "Get my membership + remaining credits")
     @GetMapping("/me")
     public ApiResponse<MembershipResponse> me(@AuthenticationPrincipal UserPrincipal principal) {
         return ApiResponse.success("membership.me", membershipService.getMyMembership(principal.getId()));
+    }
+
+    @Operation(summary = "FREE plan: generations used out of the lifetime allowance")
+    @GetMapping("/free-uses")
+    public ApiResponse<FreeQuotaCreditService.FreeQuota> freeUses(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.success("membership.freeUses", freeQuotaCreditService.freeQuota(principal.getId()));
     }
 
     @Operation(summary = "Buy / upgrade a plan (starts a payOS payment)")

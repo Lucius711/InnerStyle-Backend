@@ -37,6 +37,7 @@ public class PrintPricingController {
             .map(e -> new PrintPricingResponse.PrintMaterialPrice(e.getKey().name(), e.getValue()))
             .toList();
         return ApiResponse.success("print.pricing",
-            new PrintPricingResponse(printProperties.getFee(), sizes, materials));
+            new PrintPricingResponse(printProperties.getFee(), sizes, materials,
+                printProperties.getCoupleDiscountPercent()));
     }
 }

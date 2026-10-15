@@ -175,4 +175,58 @@ class PrintOrderServiceImplTest {
             .hasMessageContaining("print.material.invalid");
         verify(paymentService, never()).createPrintPayment(any(), any(), any(), any(), any());
     }
+
+    @Test
+    @DisplayName("placeOrder: Couple Set → both figurines priced, 13% off, rounded to 1,000 VND")
+    void placeOrder_coupleSet() {
+        UUID pairId = UUID.randomUUID();
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(meshyTaskRepository.findById(pairId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        when(printOrderRepository.save(any(PrintOrder.class))).thenAnswer(i -> i.getArgument(0));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setPairTaskId(pairId);
+        r.setPairSizeCm(12);
+
+        service.placeOrder(userId, r, "ip");
+
+        // (749,000 + 749,000) × 87% = 1,303,260 → 1,303,000
+        verify(paymentService).createPrintPayment(eq(userId), any(), eq(new BigDecimal("1303000")),
+            eq(PaymentProvider.PAYOS), eq("ip"));
+    }
+
+    @Test
+    @DisplayName("placeOrder: Couple Set with the same model twice → print.couple.sameModel")
+    void placeOrder_coupleSameModel() {
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setPairTaskId(taskId);
+        r.setPairSizeCm(12);
+
+        assertThatThrownBy(() -> service.placeOrder(userId, r, "ip"))
+            .isInstanceOf(BadRequestException.class)
+            .hasMessageContaining("print.couple.sameModel");
+    }
+
+    @Test
+    @DisplayName("placeOrder: Couple Set with someone else's model → print.task.notOwned")
+    void placeOrder_couplePairNotOwned() {
+        UUID pairId = UUID.randomUUID();
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(meshyTaskRepository.findById(pairId))
+            .thenReturn(Optional.of(task(UUID.randomUUID(), MeshyTaskStatus.SUCCEEDED)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setPairTaskId(pairId);
+        r.setPairSizeCm(12);
+
+        assertThatThrownBy(() -> service.placeOrder(userId, r, "ip"))
+            .isInstanceOf(BadRequestException.class)
+            .hasMessageContaining("print.task.notOwned");
+    }
 }

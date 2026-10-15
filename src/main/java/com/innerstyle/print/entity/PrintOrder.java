@@ -56,6 +56,14 @@ public class PrintOrder {
     @Column(length = 20)
     private PrintMaterial material;
 
+    /** Couple Set: the second model printed in this order (null for a single figurine). */
+    @Column(name = "pair_task_id")
+    private UUID pairTaskId;
+
+    /** Couple Set: height in cm of the second figurine. */
+    @Column(name = "pair_size_cm")
+    private Integer pairSizeCm;
+
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;
 
