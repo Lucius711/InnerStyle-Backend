@@ -138,6 +138,9 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         if (task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
             throw new BadRequestException("print.task.notReady");
         }
+        if (task.getModelUrls() == null || task.getModelUrls().isEmpty()) {
+            throw new BadRequestException("print.task.noModel"); // e.g. a 2D chibi concept, nothing to print
+        }
     }
 
     private PrintOrderResponse toResponse(PrintOrder o) {

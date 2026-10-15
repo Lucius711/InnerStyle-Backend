@@ -22,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -80,6 +81,7 @@ class PrintOrderServiceImplTest {
         MeshyTask t = new MeshyTask();
         t.setUserId(owner);
         t.setStatus(status);
+        t.setModelUrls(Map.of("glb", "https://example.com/model.glb"));
         return t;
     }
 
@@ -228,5 +230,24 @@ class PrintOrderServiceImplTest {
         assertThatThrownBy(() -> service.placeOrder(userId, r, "ip"))
             .isInstanceOf(BadRequestException.class)
             .hasMessageContaining("print.task.notOwned");
+    }
+
+    @Test
+    @DisplayName("placeOrder: Couple Set with a 2D concept (no 3D model) → print.task.noModel")
+    void placeOrder_couplePairHasNoModel() {
+        UUID pairId = UUID.randomUUID();
+        MeshyTask concept = task(userId, MeshyTaskStatus.SUCCEEDED);
+        concept.setModelUrls(null);
+        when(meshyTaskRepository.findById(taskId))
+            .thenReturn(Optional.of(task(userId, MeshyTaskStatus.SUCCEEDED)));
+        when(meshyTaskRepository.findById(pairId)).thenReturn(Optional.of(concept));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        CreatePrintOrderRequest r = request("PAYOS", 12);
+        r.setPairTaskId(pairId);
+        r.setPairSizeCm(12);
+
+        assertThatThrownBy(() -> service.placeOrder(userId, r, "ip"))
+            .isInstanceOf(BadRequestException.class)
+            .hasMessageContaining("print.task.noModel");
     }
 }
