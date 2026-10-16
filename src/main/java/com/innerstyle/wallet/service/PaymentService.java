@@ -32,4 +32,10 @@ public interface PaymentService {
 
     /** Confirm a browser-return (verify + apply, idempotent). */
     PaymentResultResponse confirmReturn(PaymentProvider provider, Map<String, String> params);
+
+    /**
+     * Expire unpaid orders past their deadline ({@code app.payment.order-ttl}): close the payOS link
+     * and cancel the print order waiting on it. Returns how many were expired.
+     */
+    int expireStale();
 }

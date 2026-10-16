@@ -1,10 +1,12 @@
 package com.innerstyle.print.controller;
 
+import com.innerstyle.auth.security.UserPrincipal;
 import com.innerstyle.common.response.ApiResponse;
 import com.innerstyle.meshy.dto.response.PrintabilityResponse;
 import com.innerstyle.meshy.dto.response.RepairResponse;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.print.dto.request.UpdateOrderStatusRequest;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import com.innerstyle.print.service.StaffOrderService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +22,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -63,13 +66,20 @@ public class StaffOrderController {
         return ApiResponse.success("staff.order", staffOrderService.get(id));
     }
 
-    @Operation(summary = "Advance the fulfilment status of a print order")
+    @Operation(summary = "Advance the fulfilment status of a print order and/or post a tracking update")
     @PatchMapping("/{id}/status")
     public ApiResponse<StaffOrderResponse> updateStatus(
+            @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID id,
             @Valid @RequestBody UpdateOrderStatusRequest request) {
         return ApiResponse.success("staff.order.statusUpdated",
-                staffOrderService.updateStatus(id, request.getStatus()));
+                staffOrderService.updateStatus(id, request, principal.getId()));
+    }
+
+    @Operation(summary = "Tracking timeline of a print order")
+    @GetMapping("/{id}/tracking")
+    public ApiResponse<PrintOrderTrackingResponse> tracking(@PathVariable UUID id) {
+        return ApiResponse.success("staff.order.tracking", staffOrderService.tracking(id));
     }
 
     @Operation(summary = "Proxy the order's model thumbnail — fetches a fresh signed URL from Meshy and streams the image bytes")

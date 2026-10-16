@@ -10,6 +10,7 @@ import com.innerstyle.membership.service.CreditService;
 import com.innerstyle.print.entity.PrintOrder;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import com.innerstyle.print.repository.PrintOrderRepository;
+import com.innerstyle.print.service.PrintOrderEventService;
 import com.innerstyle.wallet.config.PaymentProperties;
 import com.innerstyle.wallet.dto.response.PaymentInitResponse;
 import com.innerstyle.wallet.dto.response.PaymentResultResponse;
@@ -32,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -54,9 +56,13 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentCallbackRepository paymentCallbackRepository;
     private final PayosGateway payosGateway;
     private final PaymentProperties paymentProperties;
+    private final PrintOrderEventService printOrderEventService;
 
     /** payOS link statuses after which the order can never be paid. */
     private static final Set<String> DEAD_LINK_STATUSES = Set.of("CANCELLED", "EXPIRED");
+
+    /** Our statuses for an order that can still be paid. */
+    private static final Set<PaymentStatus> OPEN_STATUSES = Set.of(PaymentStatus.PENDING, PaymentStatus.PROCESSING);
 
     @Override
     @Transactional
@@ -144,9 +150,49 @@ public class PaymentServiceImpl implements PaymentService {
         if (!DEAD_LINK_STATUSES.contains(v.responseCode())) {
             return new PaymentResultResponse(order.getOrderCode(), "PENDING", order.getAmount(), false);
         }
-        order.setStatus(PaymentStatus.FAILED);
-        paymentOrderRepository.save(order);
+        if (order.getStatus() == PaymentStatus.PENDING || order.getStatus() == PaymentStatus.PROCESSING) {
+            order.setStatus(PaymentStatus.FAILED); // keep EXPIRED as set by the expiry job
+            paymentOrderRepository.save(order);
+        }
         return new PaymentResultResponse(order.getOrderCode(), "FAILED", order.getAmount(), false);
+    }
+
+    @Override
+    @Transactional
+    public int expireStale() {
+        List<PaymentOrder> stale = paymentOrderRepository.findTop50ByStatusInAndExpiresAtBeforeOrderByExpiresAtAsc(
+            OPEN_STATUSES, Instant.now());
+        int expired = 0;
+        for (PaymentOrder candidate : stale) {
+            PaymentOrder order = lockOrder(candidate.getOrderCode());
+            if (order == null || !OPEN_STATUSES.contains(order.getStatus())) {
+                continue; // settled by a webhook meanwhile
+            }
+            // Last look at payOS: a transfer made just before the deadline must still count.
+            GatewayVerification v = payosGateway.verifyReturn(Map.of("orderCode", order.getOrderCode()));
+            if (v.signatureValid() && v.success() && v.amount() != null
+                && order.getAmount().compareTo(v.amount()) == 0) {
+                settle(order, v);
+                continue;
+            }
+            order.setStatus(PaymentStatus.EXPIRED);
+            paymentOrderRepository.save(order);
+            if (order.getCheckoutUrl() != null) {
+                payosGateway.cancelPaymentLink(order.getOrderCode(), "Het han thanh toan");
+            }
+            if (order.getPurpose() == PaymentPurpose.PRINT) {
+                printOrderRepository.findById(UUID.fromString(order.getReference()))
+                    .filter(po -> po.getStatus() == PrintOrderStatus.PENDING)
+                    .ifPresent(po -> {
+                        po.setStatus(PrintOrderStatus.CANCELLED);
+                        printOrderRepository.save(po);
+                        printOrderEventService.record(po.getId(), PrintOrderStatus.CANCELLED, "system.paymentExpired", null);
+                    });
+            }
+            expired++;
+            log.info("Payment {} expired unpaid ({}, {})", order.getOrderCode(), order.getPurpose(), order.getReference());
+        }
+        return expired;
     }
 
     // --------------------------------------------------------------------- helpers
@@ -204,8 +250,12 @@ public class PaymentServiceImpl implements PaymentService {
             creditService.activatePlan(order.getUser().getId(), order.getReference());
         } else if (order.getPurpose() == PaymentPurpose.PRINT) {
             printOrderRepository.findById(UUID.fromString(order.getReference())).ifPresent(po -> {
+                if (po.getStatus() == PrintOrderStatus.PAID) {
+                    return; // a replayed callback must not add a second "paid" step to the timeline
+                }
                 po.setStatus(PrintOrderStatus.PAID);
                 printOrderRepository.save(po);
+                printOrderEventService.record(po.getId(), PrintOrderStatus.PAID, null, null);
             });
         }
         log.info("Payment {} settled ({}, {})", order.getOrderCode(), order.getPurpose(),

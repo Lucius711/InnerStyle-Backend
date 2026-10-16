@@ -10,7 +10,7 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "app.payment")
 public record PaymentProperties(
-    @DefaultValue("PT15M") Duration orderTtl,
+    @DefaultValue("PT30M") Duration orderTtl,
     @DefaultValue Payos payos
 ) {
 

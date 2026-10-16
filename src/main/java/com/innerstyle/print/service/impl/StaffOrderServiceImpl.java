@@ -9,13 +9,18 @@ import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.repository.MeshyTaskRepository;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.meshy.service.PrintabilityService;
+import com.innerstyle.notification.event.PrintOrderProgressEvent;
+import com.innerstyle.print.dto.request.UpdateOrderStatusRequest;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import com.innerstyle.print.entity.PrintOrder;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import com.innerstyle.print.repository.PrintOrderRepository;
+import com.innerstyle.print.service.PrintOrderEventService;
 import com.innerstyle.print.service.StaffOrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -37,6 +42,8 @@ public class StaffOrderServiceImpl implements StaffOrderService {
     private final MeshyTaskRepository meshyTaskRepository;
     private final MeshyTaskService meshyTaskService;
     private final PrintabilityService printabilityService;
+    private final PrintOrderEventService eventService;
+    private final ApplicationEventPublisher events;
 
 
     @Override
@@ -60,12 +67,35 @@ public class StaffOrderServiceImpl implements StaffOrderService {
 
     @Override
     @Transactional
-    public StaffOrderResponse updateStatus(UUID orderId, String status) {
+    public StaffOrderResponse updateStatus(UUID orderId, UpdateOrderStatusRequest request, UUID actorId) {
         PrintOrder order = getOrderOrThrow(orderId);
-        order.setStatus(parseStatus(status));
+        PrintOrderStatus next = parseStatus(request.getStatus());
+        boolean changed = order.getStatus() != next;
+        String note = request.getNote() == null || request.getNote().isBlank() ? null : request.getNote().trim();
+        if (request.getCarrier() != null) {
+            order.setCarrier(request.getCarrier().isBlank() ? null : request.getCarrier().trim());
+        }
+        if (request.getTrackingCode() != null) {
+            order.setTrackingCode(request.getTrackingCode().isBlank() ? null : request.getTrackingCode().trim());
+        }
+        order.setStatus(next);
         printOrderRepository.save(order);
-        log.info("Staff updated print order {} -> {}", orderId, status);
+        if (changed || note != null) {
+            eventService.record(orderId, next, note, actorId);
+            // emailed to the customer after this transaction commits (see EmailOrderNotificationService)
+            String email = order.getRecipientEmail() != null ? order.getRecipientEmail()
+                : order.getUser() == null ? null : order.getUser().getEmail();
+            events.publishEvent(new PrintOrderProgressEvent(orderId, next.name(), note,
+                order.getCarrier(), order.getTrackingCode(), email, order.getRecipientName()));
+        }
+        log.info("Staff {} updated print order {} -> {}{}", actorId, orderId, next, note == null ? "" : " (note)");
         return toResponse(order);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PrintOrderTrackingResponse tracking(UUID orderId) {
+        return eventService.tracking(getOrderOrThrow(orderId));
     }
 
     @Override
@@ -167,6 +197,8 @@ public class StaffOrderServiceImpl implements StaffOrderService {
             o.getPairSizeCm(),
             o.isWithLight(),
             o.isWithCard(),
-            o.getCardMessage());
+            o.getCardMessage(),
+            o.getCarrier(),
+            o.getTrackingCode());
     }
 }

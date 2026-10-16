@@ -36,6 +36,17 @@ spring:
           enabled: true
           max-active: 16
           max-idle: 8
+  # Outgoing email through Resend's SMTP relay (login is the literal "resend", password the API key).
+  mail:
+    host: smtp.resend.com
+    port: 465
+    username: resend
+    password: ${RESEND_API_KEY:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
   jackson:
     default-property-inclusion: non_null
     serialization:
@@ -52,6 +63,12 @@ app:
   # (http://localhost:*, https://*.vercel.app, *.ngrok.*) are an over-wide trust boundary and were
   # removed from the default. Add extra origins (ngrok tunnels, Vercel previews) explicitly via
   # APP_CORS_ALLOWED_ORIGIN_PATTERNS per environment; keep production on the real frontend origin.
+  # Customer emails (order progress). Sending is skipped while RESEND_API_KEY is empty.
+  notification:
+    resend-api-key: ${RESEND_API_KEY:}
+    # Must be on a domain verified in Resend.
+    mail-from: ${MAIL_FROM:InnerStyle <no-reply@innerstyle.online>}
+    frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
   cors:
     allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:5173,http://127.0.0.1:5173,https://www.innerstyle.online}
   meshy:
@@ -113,7 +130,8 @@ app:
 
   # --- Payment gateways (direct payment for subscription + print) ---
   payment:
-    order-ttl: ${PAYMENT_ORDER_TTL:PT15M}
+    # Unpaid orders are expired (payOS link closed, print order cancelled) after this long.
+    order-ttl: ${PAYMENT_ORDER_TTL:PT30M}
     payos:
       client-id: ${PAYOS_CLIENT_ID:}
       api-key: ${PAYOS_API_KEY:}

@@ -3,6 +3,8 @@ package com.innerstyle.print.service;
 import com.innerstyle.meshy.dto.response.PrintabilityResponse;
 import com.innerstyle.meshy.dto.response.RepairResponse;
 import com.innerstyle.meshy.service.MeshyTaskService;
+import com.innerstyle.print.dto.request.UpdateOrderStatusRequest;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import com.innerstyle.print.dto.response.StaffOrderResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -19,7 +21,14 @@ public interface StaffOrderService {
 
     StaffOrderResponse get(UUID orderId);
 
-    StaffOrderResponse updateStatus(UUID orderId, String status);
+    /**
+     * Move the order to a status and/or post a tracking note (and carrier / tracking code). Each
+     * status change or note becomes one step on the customer's tracking timeline.
+     */
+    StaffOrderResponse updateStatus(UUID orderId, UpdateOrderStatusRequest request, UUID actorId);
+
+    /** The order's tracking timeline. */
+    PrintOrderTrackingResponse tracking(UUID orderId);
 
     /** Resolve the order's source model and prepare it for streamed zip download. */
     MeshyTaskService.ExportPrep prepareModelZip(UUID orderId, String format, boolean isPair);

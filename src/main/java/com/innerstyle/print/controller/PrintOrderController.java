@@ -5,6 +5,7 @@ import com.innerstyle.common.response.ApiResponse;
 import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import com.innerstyle.print.service.PrintOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -69,6 +70,14 @@ public class PrintOrderController {
             HttpServletRequest http) {
         return ApiResponse.success("print.order.payment",
                 printOrderService.resumePayment(principal.getId(), id, clientIp(http)));
+    }
+
+    @Operation(summary = "Track one of my orders (status timeline, carrier, tracking code)")
+    @GetMapping("/orders/{id}/tracking")
+    public ApiResponse<PrintOrderTrackingResponse> tracking(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID id) {
+        return ApiResponse.success("print.order.tracking", printOrderService.tracking(principal.getId(), id));
     }
 
     private String clientIp(HttpServletRequest request) {

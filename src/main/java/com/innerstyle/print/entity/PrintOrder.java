@@ -75,6 +75,13 @@ public class PrintOrder {
     @Column(name = "card_message", length = 300)
     private String cardMessage;
 
+    /** Shipping carrier and tracking code, filled in by staff when the parcel leaves (order tracking). */
+    @Column(length = 100)
+    private String carrier;
+
+    @Column(name = "tracking_code", length = 100)
+    private String trackingCode;
+
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;
 

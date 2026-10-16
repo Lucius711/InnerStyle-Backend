@@ -52,6 +52,10 @@ public record StaffOrderResponse(
     // Gift extras to pack with the figurine
     boolean withLight,
     boolean withCard,
-    String cardMessage
+    String cardMessage,
+
+    // Tracking
+    String carrier,
+    String trackingCode
 ) {
 }

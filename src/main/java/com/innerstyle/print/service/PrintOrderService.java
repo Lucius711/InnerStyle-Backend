@@ -3,6 +3,7 @@ package com.innerstyle.print.service;
 import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -21,4 +22,7 @@ public interface PrintOrderService {
 
     /** Continue paying one of MY still-PENDING orders (e.g. after leaving the payment page). */
     PrintOrderInitResponse resumePayment(UUID userId, UUID orderId, String clientIp);
+
+    /** Tracking timeline of one of MY orders. */
+    PrintOrderTrackingResponse tracking(UUID userId, UUID orderId);
 }

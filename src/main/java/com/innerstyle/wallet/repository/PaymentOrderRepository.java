@@ -14,6 +14,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,6 +47,10 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, UUID
     BigDecimal sumAmount(@Param("status") PaymentStatus status, @Param("purpose") PaymentPurpose purpose);
 
     long countByStatus(PaymentStatus status);
+
+    /** Unpaid orders past their deadline, oldest first (the expiry job works through them in batches). */
+    List<PaymentOrder> findTop50ByStatusInAndExpiresAtBeforeOrderByExpiresAtAsc(
+        Collection<PaymentStatus> statuses, Instant now);
 
     /** Latest payment still awaiting the gateway for a given purpose/reference (e.g. a print order). */
     Optional<PaymentOrder> findFirstByPurposeAndReferenceAndStatusOrderByCreatedAtDesc(

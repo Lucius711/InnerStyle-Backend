@@ -82,6 +82,10 @@ public class PayosGateway {
         body.put("cancelUrl", cfg.cancelUrl());
         body.put("returnUrl", cfg.returnUrl());
         body.put("signature", signature);
+        // payOS closes the link itself at our deadline (unix seconds; not part of the signature)
+        if (order.getExpiresAt() != null) {
+            body.put("expiredAt", order.getExpiresAt().getEpochSecond());
+        }
 
         Map<String, Object> response;
         try {
@@ -105,6 +109,25 @@ public class PayosGateway {
         }
         Object qrCode = d.get("qrCode");
         return new Checkout(String.valueOf(checkoutUrl), qrCode == null ? null : String.valueOf(qrCode));
+    }
+
+    /** Cancel a still-open payOS link so it can no longer be paid. Best effort: failures are only logged. */
+    public void cancelPaymentLink(String orderCode, String reason) {
+        PaymentProperties.Payos cfg = props.payos();
+        if (isBlank(cfg.clientId()) || isBlank(cfg.apiKey())) {
+            return;
+        }
+        try {
+            restClient.post()
+                .uri(cfg.endpoint() + "/v2/payment-requests/{id}/cancel", orderCode)
+                .header("x-client-id", cfg.clientId())
+                .header("x-api-key", cfg.apiKey())
+                .body(Map.of("cancellationReason", reason))
+                .retrieve()
+                .toBodilessEntity();
+        } catch (Exception ex) {
+            log.warn("payOS cancel link {} failed: {}", orderCode, ex.getMessage());
+        }
     }
 
     /** Verify a payOS webhook payload ({@code {code, desc, success, data, signature}}). */

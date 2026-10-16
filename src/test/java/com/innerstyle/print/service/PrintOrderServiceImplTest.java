@@ -62,7 +62,7 @@ class PrintOrderServiceImplTest {
         printProperties.getMaterials().put(PrintMaterial.PLA, BigDecimal.ZERO);
         printProperties.getMaterials().put(PrintMaterial.RESIN, new BigDecimal("150000"));
         service = new PrintOrderServiceImpl(printOrderRepository, meshyTaskRepository,
-            userRepository, paymentService, printProperties);
+            userRepository, paymentService, printProperties, mock(com.innerstyle.print.service.PrintOrderEventService.class));
     }
 
     private CreatePrintOrderRequest request(String provider, Integer sizeCm) {

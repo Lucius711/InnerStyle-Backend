@@ -11,10 +11,12 @@ import com.innerstyle.print.config.PrintProperties;
 import com.innerstyle.print.dto.request.CreatePrintOrderRequest;
 import com.innerstyle.print.dto.response.PrintOrderInitResponse;
 import com.innerstyle.print.dto.response.PrintOrderResponse;
+import com.innerstyle.print.dto.response.PrintOrderTrackingResponse;
 import com.innerstyle.print.entity.PrintOrder;
 import com.innerstyle.print.entity.enums.PrintMaterial;
 import com.innerstyle.print.entity.enums.PrintOrderStatus;
 import com.innerstyle.print.repository.PrintOrderRepository;
+import com.innerstyle.print.service.PrintOrderEventService;
 import com.innerstyle.print.service.PrintOrderService;
 import com.innerstyle.wallet.dto.response.PaymentInitResponse;
 import com.innerstyle.wallet.entity.enums.PaymentProvider;
@@ -43,6 +45,7 @@ public class PrintOrderServiceImpl implements PrintOrderService {
     private final UserRepository userRepository;
     private final PaymentService paymentService;
     private final PrintProperties printProperties;
+    private final PrintOrderEventService eventService;
 
     @Override
     @Transactional
@@ -107,6 +110,7 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         order.setLatitude(request.getLatitude());
         order.setLongitude(request.getLongitude());
         printOrderRepository.save(order);
+        eventService.record(order.getId(), PrintOrderStatus.PENDING, null, null);
 
         PaymentInitResponse pay = paymentService.createPrintPayment(
             userId, order.getId(), amount, provider, clientIp);
@@ -134,6 +138,15 @@ public class PrintOrderServiceImpl implements PrintOrderService {
         PaymentInitResponse pay = paymentService.resumePrintPayment(
             userId, order.getId(), order.getAmount(), clientIp);
         return new PrintOrderInitResponse(order.getId(), pay);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PrintOrderTrackingResponse tracking(UUID userId, UUID orderId) {
+        PrintOrder order = printOrderRepository.findById(orderId)
+            .filter(o -> o.getUser().getId().equals(userId))
+            .orElseThrow(() -> new ResourceNotFoundException("print.order.notFound"));
+        return eventService.tracking(order);
     }
 
     /** The model must exist, belong to the buyer and be finished. */

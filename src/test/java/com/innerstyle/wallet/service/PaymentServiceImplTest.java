@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -61,7 +62,7 @@ class PaymentServiceImplTest {
         payosGateway = mock(PayosGateway.class);
         service = new PaymentServiceImpl(userRepository, mock(MembershipPlanRepository.class),
             printOrderRepository, creditService, paymentOrderRepository, paymentCallbackRepository,
-            payosGateway, mock(PaymentProperties.class));
+            payosGateway, mock(PaymentProperties.class), mock(com.innerstyle.print.service.PrintOrderEventService.class));
     }
 
     private PaymentOrder subscriptionOrder(PaymentStatus status) {
@@ -269,5 +270,56 @@ class PaymentServiceImplTest {
         assertThat(printOrder.getStatus()).isEqualTo(PrintOrderStatus.PAID);
         verify(printOrderRepository).save(printOrder);
         verify(creditService, never()).activatePlan(any(), any());
+    }
+
+    // ------------------------------------------------------------------ expiry (30-minute timeout)
+
+    private PaymentOrder stalePrintOrder(UUID printOrderId) {
+        PaymentOrder o = subscriptionOrder(PaymentStatus.PROCESSING);
+        o.setPurpose(PaymentPurpose.PRINT);
+        o.setReference(printOrderId.toString());
+        o.setCheckoutUrl("https://pay.payos.vn/web/abc");
+        when(paymentOrderRepository.findTop50ByStatusInAndExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+            .thenReturn(List.of(o));
+        when(paymentOrderRepository.findByOrderCodeForUpdate("123456")).thenReturn(Optional.of(o));
+        return o;
+    }
+
+    @Test
+    @DisplayName("expiry: unpaid past the deadline → EXPIRED, payOS link cancelled, print order cancelled")
+    void expireStale_unpaid_expiresAndCancels() {
+        UUID printOrderId = UUID.randomUUID();
+        PaymentOrder order = stalePrintOrder(printOrderId);
+        PrintOrder po = new PrintOrder();
+        po.setStatus(PrintOrderStatus.PENDING);
+        when(printOrderRepository.findById(printOrderId)).thenReturn(Optional.of(po));
+        when(payosGateway.verifyReturn(anyMap()))
+            .thenReturn(new GatewayVerification(true, false, "123456", new BigDecimal("100000"), null, "PENDING"));
+
+        int n = service.expireStale();
+
+        assertThat(n).isEqualTo(1);
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        assertThat(po.getStatus()).isEqualTo(PrintOrderStatus.CANCELLED);
+        verify(payosGateway).cancelPaymentLink(eq("123456"), any());
+    }
+
+    @Test
+    @DisplayName("expiry: paid at payOS right before the deadline → settled, not expired")
+    void expireStale_paidAtLastMinute_settles() {
+        UUID printOrderId = UUID.randomUUID();
+        PaymentOrder order = stalePrintOrder(printOrderId);
+        PrintOrder po = new PrintOrder();
+        po.setStatus(PrintOrderStatus.PENDING);
+        when(printOrderRepository.findById(printOrderId)).thenReturn(Optional.of(po));
+        when(payosGateway.verifyReturn(anyMap()))
+            .thenReturn(new GatewayVerification(true, true, "123456", new BigDecimal("100000"), "TXN1", "PAID"));
+
+        int n = service.expireStale();
+
+        assertThat(n).isZero();
+        assertThat(order.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
+        assertThat(po.getStatus()).isEqualTo(PrintOrderStatus.PAID);
+        verify(payosGateway, never()).cancelPaymentLink(any(), any());
     }
 }
