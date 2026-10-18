@@ -47,4 +47,33 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
     @Query("SELECT t.id FROM MeshyTask t WHERE t.status = 'SUCCEEDED' AND t.deletedAt IS NULL"
             + " AND t.taskType <> 'UPLOADED' ORDER BY t.createdAt DESC")
     List<UUID> findR2BackfillCandidates();
+
+    /** Admin model stats: one row per task type. */
+    interface TypeCount {
+        MeshyTaskType getTaskType();
+        Long getTotal();
+    }
+
+    /** Admin model stats: one row per (account, task type). */
+    interface AccountTypeCount {
+        UUID getUserId();
+        String getEmail();
+        String getFullName();
+        MeshyTaskType getTaskType();
+        Long getTotal();
+        java.time.Instant getLastCreatedAt();
+    }
+
+    @Query("SELECT t.taskType AS taskType, COUNT(t) AS total FROM MeshyTask t"
+            + " WHERE t.taskType IN :types AND t.status IN :statuses GROUP BY t.taskType")
+    List<TypeCount> countByType(@Param("types") java.util.Collection<MeshyTaskType> types,
+                                @Param("statuses") java.util.Collection<MeshyTaskStatus> statuses);
+
+    @Query("SELECT u.id AS userId, u.email AS email, u.fullName AS fullName, t.taskType AS taskType,"
+            + " COUNT(t) AS total, MAX(t.createdAt) AS lastCreatedAt"
+            + " FROM MeshyTask t JOIN User u ON u.id = t.userId"
+            + " WHERE t.taskType IN :types AND t.status IN :statuses"
+            + " GROUP BY u.id, u.email, u.fullName, t.taskType")
+    List<AccountTypeCount> countByAccountAndType(@Param("types") java.util.Collection<MeshyTaskType> types,
+                                                 @Param("statuses") java.util.Collection<MeshyTaskStatus> statuses);
 }
