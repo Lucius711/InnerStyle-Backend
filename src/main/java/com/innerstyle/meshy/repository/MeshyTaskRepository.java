@@ -76,4 +76,8 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
             + " GROUP BY u.id, u.email, u.fullName, t.taskType")
     List<AccountTypeCount> countByAccountAndType(@Param("types") java.util.Collection<MeshyTaskType> types,
                                                  @Param("statuses") java.util.Collection<MeshyTaskStatus> statuses);
+
+    /** Whether a prototype already has a build that is running or finished (FREE: one build per use). */
+    boolean existsByParentIdAndTaskTypeAndStatusIn(UUID parentId, MeshyTaskType taskType,
+            List<MeshyTaskStatus> statuses);
 }

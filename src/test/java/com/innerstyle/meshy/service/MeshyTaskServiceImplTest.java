@@ -166,6 +166,57 @@ class MeshyTaskServiceImplTest {
     }
 
     @Test
+    void freePlanFigurineBuildUsesNoExtraGenerationAndOnlyOncePerPrototype() {
+        var freePlan = new com.innerstyle.membership.entity.MembershipPlan();
+        freePlan.setPrice(java.math.BigDecimal.ZERO);
+        var membership = new com.innerstyle.membership.entity.UserMembership();
+        membership.setPlan(freePlan);
+        when(creditService.getOrCreateMembership(any())).thenReturn(membership);
+        lenient().when(creditService.creditCost("FIGURE_BUILD")).thenReturn(30);
+
+        UUID protoId = UUID.randomUUID();
+        MeshyTask proto = new MeshyTask();
+        proto.setId(protoId);
+        proto.setMeshyTaskId("proto-1");
+        proto.setTaskType(MeshyTaskType.FIGURE_PROTOTYPE);
+        proto.setStatus(MeshyTaskStatus.SUCCEEDED);
+        when(taskRepository.findById(protoId)).thenReturn(Optional.of(proto));
+        when(meshyClient.createFigureBuild("proto-1")).thenReturn("build-1");
+        // 1st call: taken? no; failed before? no.  2nd call: taken? yes.
+        when(taskRepository.existsByParentIdAndTaskTypeAndStatusIn(any(), any(), any()))
+            .thenReturn(false, false, true);
+        var request = new com.innerstyle.meshy.dto.request.FigurineBuildRequest();
+        request.setSourceTaskId(protoId);
+
+        service.buildFigurine(request); // the prototype already took the FREE use
+        verify(creditService, org.mockito.Mockito.never()).consume(any(), anyString(), anyString(), any());
+
+        assertThatThrownBy(() -> service.buildFigurine(request))
+            .isInstanceOf(com.innerstyle.common.exception.BadRequestException.class)
+            .hasMessage("meshy.figurine.alreadyBuilt");
+    }
+
+    @Test
+    void failedFigurineBuildGivesTheGenerationBack() {
+        UUID userId = UUID.randomUUID();
+        MeshyTask build = new MeshyTask();
+        build.setId(UUID.randomUUID());
+        build.setUserId(userId);
+        build.setMeshyTaskId("build-9");
+        build.setTaskType(MeshyTaskType.FIGURE_BUILD);
+        build.setStatus(MeshyTaskStatus.IN_PROGRESS);
+        when(taskRepository.findByMeshyTaskId("build-9")).thenReturn(Optional.of(build));
+        lenient().when(taskRepository.save(any(MeshyTask.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(creditService.creditCost("FIGURE_BUILD")).thenReturn(30);
+
+        service.applyRemoteState(new MeshyTaskDto("build-9", "build", "FAILED", 0,
+            null, null, null, null, null, null, null, null, null));
+
+        // FREE: FreeQuotaCreditService turns this into one use returned; paid: 30 credits back
+        verify(creditService).refund(userId, 30, "MESHY_TASK", build.getId());
+    }
+
+    @Test
     void applyRemoteStateMergesModelUrlsAndStatus() {
         MeshyTask task = new MeshyTask();
         task.setMeshyTaskId("meshy-xyz");

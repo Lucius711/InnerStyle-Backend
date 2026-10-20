@@ -103,6 +103,12 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private static final List<MeshyTaskStatus> REUSABLE_RIG_STATUSES = List.of(
             MeshyTaskStatus.PENDING, MeshyTaskStatus.IN_PROGRESS, MeshyTaskStatus.SUCCEEDED);
 
+    /** A prototype's FREE build is used up while one is running or has succeeded (a failed one can be retried). */
+    private static final List<MeshyTaskStatus> BUILD_TAKEN_STATUSES = REUSABLE_RIG_STATUSES;
+
+    private static final List<MeshyTaskStatus> BUILD_FAILED_STATUSES = List.of(
+            MeshyTaskStatus.FAILED, MeshyTaskStatus.CANCELED);
+
     private final MeshyClient meshyClient;
     private final MeshyTaskRepository taskRepository;
     private final MeshyTaskAssetRepository assetRepository;
@@ -231,7 +237,9 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             texturePrompt = proto.getPrompt();
         }
         contentModeration.assertClean(texturePrompt);
-        BillingContext billing = beginBilling(MeshyTaskType.FIGURE_BUILD);
+        BillingContext billing = isFreePlan(currentUserIdOrThrow())
+                ? freeFigureBuild(proto)
+                : beginBilling(MeshyTaskType.FIGURE_BUILD);
         String meshyTaskId;
         try {
             meshyTaskId = meshyClient.createFigureBuild(proto.getMeshyTaskId());
@@ -1699,6 +1707,30 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
             creditService.consume(userId, type.name(), "MESHY_TASK", null);
         }
         return new BillingContext(userId, cost);
+    }
+
+    /**
+     * FREE plan: a whole Chibi figurine (prototype + build) costs one use, already taken by the
+     * prototype, so the first build is not billed. A failed build gives that use back
+     * (settleCreditsOnTerminal), so a retry after a failure is billed like any operation (and
+     * refunded again if it fails too). Only one running/finished build per prototype, else a
+     * single use could be rebuilt forever.
+     */
+    private BillingContext freeFigureBuild(MeshyTask proto) {
+        if (taskRepository.existsByParentIdAndTaskTypeAndStatusIn(proto.getId(), MeshyTaskType.FIGURE_BUILD,
+                BUILD_TAKEN_STATUSES)) {
+            throw new BadRequestException("meshy.figurine.alreadyBuilt");
+        }
+        if (taskRepository.existsByParentIdAndTaskTypeAndStatusIn(proto.getId(), MeshyTaskType.FIGURE_BUILD,
+                BUILD_FAILED_STATUSES)) {
+            return beginBilling(MeshyTaskType.FIGURE_BUILD); // the included use was already refunded
+        }
+        return new BillingContext(currentUserIdOrThrow(), 0);
+    }
+
+    private boolean isFreePlan(UUID userId) {
+        UserMembership m = creditService.getOrCreateMembership(userId);
+        return m.getPlan() == null || m.getPlan().isFree();
     }
 
     private void abortBilling(BillingContext ctx) {
