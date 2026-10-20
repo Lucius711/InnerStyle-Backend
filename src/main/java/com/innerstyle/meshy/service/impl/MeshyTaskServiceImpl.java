@@ -227,19 +227,45 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse buildFigurine(FigurineBuildRequest request) {
         ensureConfigured();
-        MeshyTask proto = requireSucceeded(request.getSourceTaskId(), MeshyTaskType.FIGURE_PROTOTYPE);
-        // Texture description: explicit value on the build request wins, otherwise
-        // inherit the
-        // one captured at stage 1. Stored on the build task for a later /retexture
-        // step.
-        String texturePrompt = blankToNull(request.getTexturePrompt());
-        if (texturePrompt == null) {
-            texturePrompt = proto.getPrompt();
+        requireSucceeded(request.getSourceTaskId(), MeshyTaskType.FIGURE_PROTOTYPE); // ownership + state
+        return startFigurineBuild(request.getSourceTaskId(), blankToNull(request.getTexturePrompt()),
+                currentUserIdOrThrow());
+    }
+
+    @Override
+    @Transactional
+    public void autoBuildFigurine(UUID prototypeTaskId) {
+        MeshyTask proto = taskRepository.findById(prototypeTaskId).orElse(null);
+        if (proto == null || proto.getUserId() == null || !properties.hasApiKey()
+                || proto.getTaskType() != MeshyTaskType.FIGURE_PROTOTYPE
+                || proto.getStatus() != MeshyTaskStatus.SUCCEEDED) {
+            return;
         }
+        startFigurineBuild(prototypeTaskId, null, proto.getUserId());
+        log.info("Auto-started figurine build for prototype {}", prototypeTaskId);
+    }
+
+    /**
+     * Start (or return the already started) build of a SUCCEEDED prototype for {@code userId}.
+     * Called by the browser (POST /figurine/build) AND by the server when the prototype finishes
+     * (autoBuildFigurine), so the user can close the tab. The prototype row is locked first so
+     * those two can't both create — and bill — a build.
+     */
+    private MeshyTaskResponse startFigurineBuild(UUID prototypeTaskId, String texturePromptOverride, UUID userId) {
+        MeshyTask proto = taskRepository.findByIdForUpdate(prototypeTaskId)
+                .orElseThrow(() -> new ResourceNotFoundException("meshy.task.notFound"));
+        Optional<MeshyTask> existing = taskRepository.findFirstByParentIdAndTaskTypeAndStatusIn(
+                proto.getId(), MeshyTaskType.FIGURE_BUILD, BUILD_TAKEN_STATUSES);
+        if (existing.isPresent()) {
+            return taskMapper.toResponse(existing.get());
+        }
+        // Texture description: explicit value on the build request wins, otherwise the one
+        // captured at stage 1. Stored on the build task for a later /retexture step.
+        String texturePrompt = texturePromptOverride != null ? texturePromptOverride : proto.getPrompt();
         contentModeration.assertClean(texturePrompt);
-        BillingContext billing = isFreePlan(currentUserIdOrThrow())
-                ? freeFigureBuild(proto)
-                : beginBilling(MeshyTaskType.FIGURE_BUILD);
+        BillingContext billing = isFreePlan(userId)
+                ? freeFigureBuild(proto, userId)
+                : beginBilling(MeshyTaskType.FIGURE_BUILD, userId);
         String meshyTaskId;
         try {
             meshyTaskId = meshyClient.createFigureBuild(proto.getMeshyTaskId());
@@ -450,6 +476,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse rig(RigRequest request) {
         ensureConfigured();
+        requirePremiumMembership(currentUserIdOrThrow(), "meshy.rig.premiumOnly");
         SourceRef source = resolveSource(request.getSourceTaskId(), request.getModelUrl(), null);
         // The Creative Lab auto-rigs every model it opens: reuse a live rig of the same, unchanged
         // model instead of charging again. A model edited after that rig gets a fresh one.
@@ -482,6 +509,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     @Transactional
     public MeshyTaskResponse animate(AnimateRequest request) {
         ensureConfigured();
+        requirePremiumMembership(currentUserIdOrThrow(), "meshy.rig.premiumOnly");
         MeshyTask rig = requireSucceeded(request.getRigTaskId(), MeshyTaskType.RIG);
         BillingContext billing = beginBilling(MeshyTaskType.ANIMATE);
         String meshyTaskId;
@@ -1512,11 +1540,16 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
 
     /** Resizing is a premium feature: require an active, paid membership. */
     private void requirePremiumMembership(UUID userId) {
+        requirePremiumMembership(userId, "meshy.export.premiumOnly");
+    }
+
+    /** Premium features (resize, rig/animate): require an active, paid (Pro/Max) membership. */
+    private void requirePremiumMembership(UUID userId, String errorCode) {
         UserMembership m = creditService.getOrCreateMembership(userId);
         boolean premium = m.getStatus() == MembershipStatus.ACTIVE
                 && m.getPlan() != null && !m.getPlan().isFree();
         if (!premium) {
-            throw new ForbiddenException("meshy.export.premiumOnly");
+            throw new ForbiddenException(errorCode);
         }
     }
 
@@ -1701,7 +1734,10 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      * caller must {@link #abortBilling} on a submit failure to refund.
      */
     private BillingContext beginBilling(MeshyTaskType type) {
-        UUID userId = currentUserIdOrThrow();
+        return beginBilling(type, currentUserIdOrThrow());
+    }
+
+    private BillingContext beginBilling(MeshyTaskType type, UUID userId) {
         int cost = creditService.creditCost(type.name());
         if (cost > 0) {
             creditService.consume(userId, type.name(), "MESHY_TASK", null);
@@ -1713,19 +1749,15 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
      * FREE plan: a whole Chibi figurine (prototype + build) costs one use, already taken by the
      * prototype, so the first build is not billed. A failed build gives that use back
      * (settleCreditsOnTerminal), so a retry after a failure is billed like any operation (and
-     * refunded again if it fails too). Only one running/finished build per prototype, else a
-     * single use could be rebuilt forever.
+     * refunded again if it fails too). A running/finished build is reused, never re-billed
+     * (startFigurineBuild).
      */
-    private BillingContext freeFigureBuild(MeshyTask proto) {
-        if (taskRepository.existsByParentIdAndTaskTypeAndStatusIn(proto.getId(), MeshyTaskType.FIGURE_BUILD,
-                BUILD_TAKEN_STATUSES)) {
-            throw new BadRequestException("meshy.figurine.alreadyBuilt");
-        }
+    private BillingContext freeFigureBuild(MeshyTask proto, UUID userId) {
         if (taskRepository.existsByParentIdAndTaskTypeAndStatusIn(proto.getId(), MeshyTaskType.FIGURE_BUILD,
                 BUILD_FAILED_STATUSES)) {
-            return beginBilling(MeshyTaskType.FIGURE_BUILD); // the included use was already refunded
+            return beginBilling(MeshyTaskType.FIGURE_BUILD, userId); // the included use was already refunded
         }
-        return new BillingContext(currentUserIdOrThrow(), 0);
+        return new BillingContext(userId, 0);
     }
 
     private boolean isFreePlan(UUID userId) {

@@ -65,6 +65,13 @@ public interface MeshyTaskService {
     MeshyTaskResponse buildFigurine(FigurineBuildRequest request);
 
     /**
+     * Server-side stage 2 of the chibi figurine: start the build of a prototype that just
+     * succeeded, billed to the prototype's owner, so the flow finishes even if the browser was
+     * closed. No-op if a build already runs/finished. Its own transaction (called after commit).
+     */
+    void autoBuildFigurine(UUID prototypeTaskId);
+
+    /**
      * Import a user-provided 3D file (.glb/.gltf/.obj/.fbx/.stl): store its bytes locally and
      * create a SUCCEEDED task so it appears in the library and can run the rest of the pipeline
      * (custom base, printability, export, and Meshy remesh/retexture/rig via data URI).

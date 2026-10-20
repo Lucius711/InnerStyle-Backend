@@ -110,8 +110,31 @@ class MeshyTaskServiceImplTest {
         assertThat(captor.getValue().getMeshyTaskId()).isEqualTo("meshy-123");
     }
 
+    private void signedInPlan(java.math.BigDecimal price) {
+        var plan = new com.innerstyle.membership.entity.MembershipPlan();
+        plan.setPrice(price);
+        var membership = new com.innerstyle.membership.entity.UserMembership();
+        membership.setPlan(plan);
+        membership.setStatus(com.innerstyle.membership.entity.enums.MembershipStatus.ACTIVE);
+        when(creditService.getOrCreateMembership(any())).thenReturn(membership);
+    }
+
+    @Test
+    void rigAndAnimateArePremiumOnly() {
+        signedInPlan(java.math.BigDecimal.ZERO); // FREE
+
+        assertThatThrownBy(() -> service.rig(new RigRequest(UUID.randomUUID(), null, 1.7)))
+            .isInstanceOf(com.innerstyle.common.exception.ForbiddenException.class)
+            .hasMessage("meshy.rig.premiumOnly");
+        assertThatThrownBy(() -> service.animate(new AnimateRequest(UUID.randomUUID(), 92, null, null)))
+            .isInstanceOf(com.innerstyle.common.exception.ForbiddenException.class)
+            .hasMessage("meshy.rig.premiumOnly");
+        verifyNoInteractions(meshyClient);
+    }
+
     @Test
     void rigReusesExistingRigOfUnchangedModelWithoutCharging() {
+        signedInPlan(java.math.BigDecimal.valueOf(99000)); // Pro
         UUID sourceId = UUID.randomUUID();
         MeshyTask source = new MeshyTask();
         source.setId(sourceId);
@@ -141,6 +164,7 @@ class MeshyTaskServiceImplTest {
 
     @Test
     void animateRejectsRigTaskThatIsNotSucceeded() {
+        signedInPlan(java.math.BigDecimal.valueOf(99000)); // Pro
         UUID rigId = UUID.randomUUID();
         MeshyTask rig = new MeshyTask();
         rig.setId(rigId);
@@ -166,7 +190,7 @@ class MeshyTaskServiceImplTest {
     }
 
     @Test
-    void freePlanFigurineBuildUsesNoExtraGenerationAndOnlyOncePerPrototype() {
+    void freePlanFigurineBuildUsesNoExtraGenerationAndIsStartedOnlyOnce() {
         var freePlan = new com.innerstyle.membership.entity.MembershipPlan();
         freePlan.setPrice(java.math.BigDecimal.ZERO);
         var membership = new com.innerstyle.membership.entity.UserMembership();
@@ -177,23 +201,29 @@ class MeshyTaskServiceImplTest {
         UUID protoId = UUID.randomUUID();
         MeshyTask proto = new MeshyTask();
         proto.setId(protoId);
+        proto.setUserId(((UserPrincipal) SecurityContextHolder.getContext().getAuthentication()
+            .getPrincipal()).getId()); // owned by the signed-in test user
         proto.setMeshyTaskId("proto-1");
         proto.setTaskType(MeshyTaskType.FIGURE_PROTOTYPE);
         proto.setStatus(MeshyTaskStatus.SUCCEEDED);
         when(taskRepository.findById(protoId)).thenReturn(Optional.of(proto));
+        when(taskRepository.findByIdForUpdate(protoId)).thenReturn(Optional.of(proto));
         when(meshyClient.createFigureBuild("proto-1")).thenReturn("build-1");
-        // 1st call: taken? no; failed before? no.  2nd call: taken? yes.
-        when(taskRepository.existsByParentIdAndTaskTypeAndStatusIn(any(), any(), any()))
-            .thenReturn(false, false, true);
+        MeshyTask running = new MeshyTask();
+        // 1st start: no build yet.  2nd start (the browser after the server already built): reuse it.
+        when(taskRepository.findFirstByParentIdAndTaskTypeAndStatusIn(any(), any(), any()))
+            .thenReturn(Optional.empty(), Optional.of(running));
+        when(taskRepository.existsByParentIdAndTaskTypeAndStatusIn(any(), any(), any())).thenReturn(false);
+
+        service.autoBuildFigurine(protoId); // server side, browser closed
         var request = new com.innerstyle.meshy.dto.request.FigurineBuildRequest();
         request.setSourceTaskId(protoId);
+        service.buildFigurine(request); // browser comes back
 
-        service.buildFigurine(request); // the prototype already took the FREE use
+        verify(meshyClient, org.mockito.Mockito.times(1)).createFigureBuild("proto-1");
+        verify(taskMapper).toResponse(running);
+        // the prototype already took the FREE use
         verify(creditService, org.mockito.Mockito.never()).consume(any(), anyString(), anyString(), any());
-
-        assertThatThrownBy(() -> service.buildFigurine(request))
-            .isInstanceOf(com.innerstyle.common.exception.BadRequestException.class)
-            .hasMessage("meshy.figurine.alreadyBuilt");
     }
 
     @Test

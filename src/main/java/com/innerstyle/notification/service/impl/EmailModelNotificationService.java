@@ -26,10 +26,13 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class EmailModelNotificationService implements ModelNotificationService {
 
-    /** Generations that take minutes; the user is likely no longer watching. */
+    /**
+     * Generations that take minutes; the user is likely no longer watching. Not FIGURE_PROTOTYPE:
+     * the server goes on to the build by itself (FigurineAutoBuildListener), mail when that is done.
+     */
     static final Set<MeshyTaskType> NOTIFY_TYPES = Set.of(
         MeshyTaskType.IMAGE_TO_3D, MeshyTaskType.MULTI_IMAGE_TO_3D, MeshyTaskType.TEXT_TO_3D_REFINE,
-        MeshyTaskType.FIGURE_PROTOTYPE, MeshyTaskType.FIGURE_BUILD);
+        MeshyTaskType.FIGURE_BUILD);
 
     static final String SUBJECT = "Mô hình 3D của bạn đã sẵn sàng";
 
@@ -61,9 +64,9 @@ public class EmailModelNotificationService implements ModelNotificationService {
     }
 
     String html(String fullName, MeshyTaskSucceededEvent e) {
-        String base = props.frontendBaseUrl().replaceAll("/+$", "");
-        boolean isFigure = e.taskType().name().startsWith("FIGURE_");
-        String link = isFigure ? base + "/lab/" + e.taskId() : base + "/my-3d-printing";
+        // The model library, not /lab/{id}: opening the editor auto-rigs the model first (a paid,
+        // minutes-long RIG task), which is not what "your model is ready" should lead to.
+        String link = props.frontendBaseUrl().replaceAll("/+$", "") + "/my-3d-printing";
         String name = fullName == null || fullName.isBlank() ? "bạn" : HtmlUtils.htmlEscape(fullName);
         return """
             <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1b1630">

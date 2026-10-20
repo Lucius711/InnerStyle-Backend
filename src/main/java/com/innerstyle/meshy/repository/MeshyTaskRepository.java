@@ -3,9 +3,11 @@ package com.innerstyle.meshy.repository;
 import com.innerstyle.meshy.entity.MeshyTask;
 import com.innerstyle.meshy.entity.enums.MeshyTaskStatus;
 import com.innerstyle.meshy.entity.enums.MeshyTaskType;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -77,7 +79,16 @@ public interface MeshyTaskRepository extends JpaRepository<MeshyTask, UUID> {
     List<AccountTypeCount> countByAccountAndType(@Param("types") java.util.Collection<MeshyTaskType> types,
                                                  @Param("statuses") java.util.Collection<MeshyTaskStatus> statuses);
 
-    /** Whether a prototype already has a build that is running or finished (FREE: one build per use). */
+    /** Whether a prototype has a build in one of these states (e.g. a failed one, for FREE billing). */
     boolean existsByParentIdAndTaskTypeAndStatusIn(UUID parentId, MeshyTaskType taskType,
             List<MeshyTaskStatus> statuses);
+
+    /** A prototype's running/finished build, reused instead of starting (and billing) a second one. */
+    Optional<MeshyTask> findFirstByParentIdAndTaskTypeAndStatusIn(UUID parentId, MeshyTaskType taskType,
+            List<MeshyTaskStatus> statuses);
+
+    /** Row lock that serializes the browser's and the server's figurine build for one prototype. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM MeshyTask t WHERE t.id = :id")
+    Optional<MeshyTask> findByIdForUpdate(@Param("id") UUID id);
 }
