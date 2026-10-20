@@ -22,7 +22,7 @@ public record MeshyProperties(
     /** Polling fallback settings (webhook is the primary completion path). */
     public record Poll(
         @DefaultValue("true") boolean enabled,
-        @DefaultValue("15000") long intervalMs,
+        @DefaultValue("5000") long intervalMs,
         @DefaultValue("25") int batchSize
     ) {}
 

@@ -44,6 +44,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -60,6 +62,7 @@ class MeshyTaskServiceImplTest {
     @Mock private ContentModeration contentModeration;
     @Mock private MeshToolRunner meshToolRunner;
     @Mock private ObjectStorageService objectStorage;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     private MeshyTaskServiceImpl service;
 
@@ -70,7 +73,7 @@ class MeshyTaskServiceImplTest {
             new MeshyProperties.Poll(true, 15000L, 25));
         service = new MeshyTaskServiceImpl(meshyClient, taskRepository, assetRepository, usdzRepository,
             thumbnailRepository, textureRepository, taskMapper, props, creditService, contentModeration,
-            meshToolRunner, objectStorage);
+            meshToolRunner, objectStorage, events);
 
         // Authenticate a user so billing (beginBilling -> currentUserIdOrThrow) can run.
         var principal = UserPrincipal.fromClaims(UUID.randomUUID(), "tester@example.com",
@@ -185,6 +188,12 @@ class MeshyTaskServiceImplTest {
         assertThat(task.getProgress()).isEqualTo(100);
         assertThat(task.getModelUrls()).containsEntry("glb", "https://example.com/model.glb");
         assertThat(task.getConsumedCredits()).isEqualTo(30);
+        // first SUCCEEDED -> one event (model-ready email); no inline R2 download any more
+        verify(events).publishEvent(any(com.innerstyle.meshy.event.MeshyTaskSucceededEvent.class));
+        verifyNoInteractions(objectStorage);
+
+        service.applyRemoteState(remote); // duplicate webhook/poll delivery
+        verify(events).publishEvent(any(com.innerstyle.meshy.event.MeshyTaskSucceededEvent.class));
     }
 
     @Test

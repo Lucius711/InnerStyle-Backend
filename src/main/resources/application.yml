@@ -80,7 +80,7 @@ app:
     # Polling fallback that reconciles task status (webhook is the primary path)
     poll:
       enabled: true
-      interval-ms: 15000
+      interval-ms: ${MESHY_POLL_INTERVAL_MS:5000}
       batch-size: 25
 
   # --- Auth / JWT ---

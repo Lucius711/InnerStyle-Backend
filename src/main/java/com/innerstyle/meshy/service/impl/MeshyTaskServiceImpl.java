@@ -56,10 +56,12 @@ import com.innerstyle.meshy.service.MeshToolRunner;
 import com.innerstyle.meshy.service.MeshyTaskService;
 import com.innerstyle.meshy.util.MeshTransformer;
 import com.innerstyle.meshy.util.MeshyStorageKeys;
+import com.innerstyle.meshy.event.MeshyTaskSucceededEvent;
 import com.innerstyle.meshy.util.SsrfGuard;
 import com.innerstyle.storage.service.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
@@ -113,6 +115,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     private final ContentModeration contentModeration;
     private final MeshToolRunner meshToolRunner;
     private final ObjectStorageService objectStorage;
+    private final ApplicationEventPublisher events;
 
     /** Name prefix of Meshy model files cached in dtb_meshy_task_textures (see cachedMeshyModel). */
     private static final String MODEL_CACHE_PREFIX = "model_";
@@ -842,16 +845,17 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
     }
 
     /**
-     * On a task's first transition into SUCCEEDED, copy its files into R2 while the Meshy links
-     * are still valid. Best-effort: a failure here only means the first view downloads it instead.
-     * ponytail: runs inside the webhook/poll transaction (multi-MB download); move to an async
-     * job if webhook latency ever matters.
+     * On a task's first transition into SUCCEEDED, tell listeners (the "model ready" email) once
+     * the update commits. Files are NOT copied to R2 here any more: a multi-MB download inside the
+     * webhook/poll transaction delayed the SUCCEEDED status the user is waiting for. The first view
+     * caches the model on demand (cachedMeshyModel) and MeshyR2BackfillJob copies the rest nightly,
+     * well before Meshy purges the task.
      */
-    private void cacheMeshyAssetsOnSuccess(MeshyTask task, MeshyTaskStatus previous) {
+    private void publishSucceeded(MeshyTask task, MeshyTaskStatus previous) {
         if (isTerminal(previous) || task.getStatus() != MeshyTaskStatus.SUCCEEDED) {
             return;
         }
-        copyMeshyAssetsToR2(task);
+        events.publishEvent(new MeshyTaskSucceededEvent(task.getId(), task.getTaskType(), task.getUserId()));
     }
 
     /**
@@ -1596,7 +1600,7 @@ public class MeshyTaskServiceImpl implements MeshyTaskService {
         log.info("Synced Meshy task {} -> {} ({}%)", task.getMeshyTaskId(), task.getStatus(),
                 task.getProgress());
         settleCreditsOnTerminal(task, previous);
-        cacheMeshyAssetsOnSuccess(task, previous);
+        publishSucceeded(task, previous);
         autoStripFigureBase(task, previous);
     }
 

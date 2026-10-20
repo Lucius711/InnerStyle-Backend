@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
@@ -38,6 +39,7 @@ import java.util.List;
 public class MeshyWebhookController {
 
     private static final String SECRET_HEADER = "X-Webhook-Secret";
+    private static final String SECRET_PARAM = "secret";
     /**
      * Publicly-known placeholder shipped in .env.example; must never be used as a
      * real secret.
@@ -59,9 +61,13 @@ public class MeshyWebhookController {
     @PostMapping("/webhooks/meshy")
     @Operation(summary = "MeshyAI task status callback")
     public ApiResponse<Void> handle(
-            @RequestHeader(value = SECRET_HEADER, required = false) String secret,
+            @RequestHeader(value = SECRET_HEADER, required = false) String headerSecret,
+            // Meshy's webhook settings only take a URL (no custom headers), so the secret is
+            // usually configured as https://<host>/api/webhooks/meshy?secret=<MESHY_WEBHOOK_SECRET>.
+            @RequestParam(value = SECRET_PARAM, required = false) String querySecret,
             @RequestBody MeshyTaskDto payload) {
-        log.info("Meshy webhook received, X-Webhook-Secret present={}", secret != null);
+        String secret = headerSecret != null ? headerSecret : querySecret;
+        log.info("Meshy webhook received, secret present={}", secret != null);
         verifySecret(secret);
         meshyTaskService.applyRemoteState(payload);
         return ApiResponse.success("meshy.webhook.received");

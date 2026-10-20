@@ -34,7 +34,7 @@ public class MeshyTaskPoller {
     private final MeshyTaskService taskService;
     private final MeshyProperties properties;
 
-    @Scheduled(fixedDelayString = "${app.meshy.poll.interval-ms:15000}", initialDelayString = "${app.meshy.poll.interval-ms:15000}")
+    @Scheduled(fixedDelayString = "${app.meshy.poll.interval-ms:5000}", initialDelayString = "${app.meshy.poll.interval-ms:5000}")
     public void reconcileActiveTasks() {
         if (!properties.hasApiKey()) {
             return; // nothing to poll until a key is configured
