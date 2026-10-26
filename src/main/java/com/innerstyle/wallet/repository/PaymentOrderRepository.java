@@ -48,6 +48,37 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, UUID
 
     long countByStatus(PaymentStatus status);
 
+    /** Admin plan stats: paid subscription orders grouped by plan code (reference). */
+    interface PlanPurchaseCount {
+        String getPlanCode();
+
+        Long getTotal();
+
+        BigDecimal getRevenue();
+
+        Instant getLastPaidAt();
+    }
+
+    @Query("""
+        select o.reference as planCode, count(o) as total, coalesce(sum(o.amount), 0) as revenue,
+               max(coalesce(o.paidAt, o.createdAt)) as lastPaidAt
+        from PaymentOrder o
+        where o.status = :status and o.purpose = :purpose
+        group by o.reference""")
+    List<PlanPurchaseCount> countByReference(@Param("status") PaymentStatus status,
+                                             @Param("purpose") PaymentPurpose purpose);
+
+    @Query("select count(distinct o.user.id) from PaymentOrder o where o.status = :status and o.purpose = :purpose")
+    long countDistinctBuyers(@Param("status") PaymentStatus status, @Param("purpose") PaymentPurpose purpose);
+
+    @EntityGraph(attributePaths = "user")
+    Page<PaymentOrder> findByStatusAndPurposeOrderByCreatedAtDesc(
+        PaymentStatus status, PaymentPurpose purpose, Pageable pageable);
+
+    @EntityGraph(attributePaths = "user")
+    Page<PaymentOrder> findByStatusAndPurposeAndReferenceOrderByCreatedAtDesc(
+        PaymentStatus status, PaymentPurpose purpose, String reference, Pageable pageable);
+
     /** Unpaid orders past their deadline, oldest first (the expiry job works through them in batches). */
     List<PaymentOrder> findTop50ByStatusInAndExpiresAtBeforeOrderByExpiresAtAsc(
         Collection<PaymentStatus> statuses, Instant now);
