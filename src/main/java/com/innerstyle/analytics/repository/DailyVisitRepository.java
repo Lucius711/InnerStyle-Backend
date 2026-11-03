@@ -21,4 +21,8 @@ public interface DailyVisitRepository extends JpaRepository<DailyVisit, LocalDat
     void increment(@Param("day") LocalDate day);
 
     List<DailyVisit> findByVisitDateGreaterThanEqualOrderByVisitDateAsc(LocalDate from);
+
+    /** All visits ever recorded (0 when the table is empty). */
+    @Query("SELECT COALESCE(SUM(d.visitCount), 0) FROM DailyVisit d")
+    long sumAllVisits();
 }

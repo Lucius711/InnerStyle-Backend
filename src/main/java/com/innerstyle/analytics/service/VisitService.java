@@ -13,6 +13,9 @@ public interface VisitService {
     /** The last {@code days} days (oldest first, today last), missing days filled with 0. */
     List<DailyVisitResponse> dailyVisits(int days);
 
+    /** Total visits since tracking started (sum of every day's counter). */
+    long totalVisits();
+
     /** Accounts in {@code dtb_users} with status ACTIVE. */
     long activeAccounts();
 

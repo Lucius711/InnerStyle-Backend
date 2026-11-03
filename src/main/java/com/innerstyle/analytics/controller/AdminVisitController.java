@@ -34,6 +34,12 @@ public class AdminVisitController {
         return ApiResponse.success("visit.daily", visitService.dailyVisits(Math.clamp(days, 1, MAX_DAYS)));
     }
 
+    @Operation(summary = "Total visits since tracking started")
+    @GetMapping("/total")
+    public ApiResponse<Long> total() {
+        return ApiResponse.success("visit.total", visitService.totalVisits());
+    }
+
     @Operation(summary = "Number of ACTIVE accounts in dtb_users")
     @GetMapping("/active-accounts")
     public ApiResponse<Long> activeAccounts() {

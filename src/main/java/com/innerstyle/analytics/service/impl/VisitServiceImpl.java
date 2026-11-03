@@ -65,6 +65,12 @@ public class VisitServiceImpl implements VisitService {
 
     @Override
     @Transactional(readOnly = true)
+    public long totalVisits() {
+        return repository.sumAllVisits();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public long activeAccounts() {
         return userRepository.countByStatus(UserStatus.ACTIVE);
     }
